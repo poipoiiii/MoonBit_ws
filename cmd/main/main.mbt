@@ -743,8 +743,28 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
         if owned.has_prefix("data: ") {
           let payload = line[6:].to_owned()
           if payload == "[DONE]" {
-            // Store assistant response in conversation history
-            ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+            // Check if the response contains a tool call
+            match @lib.parse_tool_call(full_response) {
+              Some((tool_name, args_json)) => {
+                // Notify client about tool calling
+                conn.write_string("data: **[Tool Call]: " + tool_name + "**\n\n")
+                conn.flush()
+                
+                // Execute the tool
+                let tool_result = @lib.execute_tool(tool_name, args_json, ctx.data_dir)
+                
+                // Send tool result to client
+                conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
+                conn.flush()
+                
+                // Store the combined response (tool call + result) in conversation history
+                ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+              }
+              None => {
+                // No tool call, store response normally
+                ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+              }
+            }
             // Record stats with token usage if available
             let output_chars = full_response.length()
             ctx.stats_manager.record_conversation(
