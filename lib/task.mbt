@@ -21,8 +21,52 @@ pub async fn TaskManager::load(file_path : String) -> Result[TaskManager, String
   Ok(TaskManager::new(tasks))
 }
 
+/// Find a task by ID
+pub fn TaskManager::find(self : TaskManager, id : String) -> Option[Task] {
+  self.tasks.get(id)
+}
+
+/// List tasks filtered by agent_id
+pub fn TaskManager::list_by_agent(self : TaskManager, agent_id : String) -> Array[Task] {
+  let result : Array[Task] = []
+  for task in self.tasks.values() {
+    if task.agent_id == agent_id {
+      result.push(task)
+    }
+  }
+  result
+}
+
+/// List all tasks
+pub fn TaskManager::list_all(self : TaskManager) -> Array[Task] {
+  let result : Array[Task] = []
+  for task in self.tasks.values() {
+    result.push(task)
+  }
+  result
+}
+
+/// Count number of tasks
+pub fn TaskManager::count(self : TaskManager) -> Int {
+  self.tasks.length()
+}
+
+/// Get pending and running tasks for a specific agent
+pub fn TaskManager::pending_tasks(self : TaskManager, agent_id : String) -> Array[Task] {
+  let result : Array[Task] = []
+  for task in self.tasks.values() {
+    if task.agent_id == agent_id {
+      match task.status {
+        Pending | Running => result.push(task)
+        _ => ()
+      }
+    }
+  }
+  result
+}
+
 /// Create a new task
-fn TaskManager::create_task(
+pub fn TaskManager::create_task(
   self : TaskManager,
   id : String,
   agent_id : String,
@@ -44,7 +88,7 @@ fn TaskManager::create_task(
 }
 
 /// Update task status
-fn TaskManager::update_status(self : TaskManager, id : String, status : TaskStatus) -> Option[Task] {
+pub fn TaskManager::update_status(self : TaskManager, id : String, status : TaskStatus) -> Option[Task] {
   let opt_task = self.tasks.get(id)
   let task = match opt_task {
     Some(t) => t
@@ -52,11 +96,10 @@ fn TaskManager::update_status(self : TaskManager, id : String, status : TaskStat
   }
   task.status = status
   task.updated_at = now_str()
-  self.tasks[id] = task
   Some(task)
 }
 
-/// Get pending tasks sorted by priority
+/// Get all pending tasks (unfiltered, sorted by priority)
 fn TaskManager::get_pending_tasks(self : TaskManager) -> Array[Task] {
   let result : Array[Task] = []
   for task in self.tasks.values() {
@@ -69,7 +112,7 @@ fn TaskManager::get_pending_tasks(self : TaskManager) -> Array[Task] {
 }
 
 /// Get current timestamp string
-fn now_str() -> String {
+pub fn now_str() -> String {
   // Simple timestamp - in production use proper time formatting
   "2026-07-23 12:00:00"
 }

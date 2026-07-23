@@ -11,6 +11,7 @@ pub struct Agent {
   max_tokens : Int
   temperature : Float
   tool_ids : String
+  mut conversation : Array[ChatMessage]
 }
 
 /// Task status enum

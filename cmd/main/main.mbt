@@ -23,6 +23,7 @@ async fn main {
   // Build data file paths
   let agents_file = data_dir + "/agents.csv"
   let tools_file = data_dir + "/tools.csv"
+  let tasks_file = data_dir + "/tasks.csv"
   
   println("Starting AI Agent Runtime...")
   println("Model: \{model}")
@@ -53,12 +54,24 @@ async fn main {
     }
   }
   
+  let task_manager = match @lib.TaskManager::load(tasks_file) {
+    Ok(mgr) => {
+      println("Loaded \{mgr.count()} tasks")
+      mgr
+    }
+    Err(e) => {
+      println("Warning: Failed to load tasks: \{e}")
+      @lib.TaskManager::new(Map([], capacity=0))
+    }
+  }
+  
   // Create runtime context
   let ctx = RuntimeContext::{
     api_key: api_key,
     model: model,
     agent_manager: agent_manager,
     tool_registry: tool_registry,
+    task_manager: task_manager,
     cors_origin: cors_origin,
   }
   
@@ -66,8 +79,8 @@ async fn main {
   println("Server running at http://localhost:\{port}")
   let addr = @socket.Addr::resolve("0.0.0.0", port=port)
   @http.Server::new(addr).run_forever(
-    async fn(request : @http.Request, _body : &@io.Reader, conn : @http.ServerConnection) {
-      handle_request(ctx, request, conn)
+    async fn(request : @http.Request, body : &@io.Reader, conn : @http.ServerConnection) {
+      handle_request(ctx, request, body, conn)
     },
     allow_failure=true,
   )
@@ -79,6 +92,7 @@ struct RuntimeContext {
   model : String
   agent_manager : @lib.AgentManager
   tool_registry : @lib.ToolRegistry
+  task_manager : @lib.TaskManager
   cors_origin : String
 }
 
@@ -96,6 +110,7 @@ fn cors_headers(origin : String) -> Map[String, String] {
 async fn handle_request(
   ctx : RuntimeContext,
   request : @http.Request,
+  body : &@io.Reader,
   conn : @http.ServerConnection
 ) -> Unit {
   let path = request.path
@@ -105,7 +120,7 @@ async fn handle_request(
   if meth is Options {
     conn.send_response(204, "No Content", extra_headers={
       "Access-Control-Allow-Origin": ctx.cors_origin,
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
       "Access-Control-Max-Age": "86400",
     })
@@ -120,8 +135,34 @@ async fn handle_request(
       handle_agents_json(ctx, conn)
     } else if path == "/api/tools" {
       handle_tools_json(ctx, conn)
-    } else if path.starts_with("/api/chat") {
+    } else if path.has_prefix("/api/tasks") {
+      handle_tasks_list(ctx, path, conn)
+    } else if path.has_prefix("/api/chat/history") {
+      handle_chat_history(ctx, path, conn)
+    } else if path.has_prefix("/api/chat/clear") {
+      handle_chat_clear(ctx, path, conn)
+    } else if path.has_prefix("/api/chat") {
       handle_chat_sse(ctx, path, conn)
+    } else {
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("404 Not Found")
+    }
+  } else if meth is Post {
+    if path == "/api/tasks" {
+      handle_task_create(ctx, body, conn)
+    } else {
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("404 Not Found")
+    }
+  } else if meth is Put {
+    if path.has_prefix("/api/tasks") {
+      handle_task_update(ctx, path, body, conn)
     } else {
       conn.send_response(404, "Not Found", extra_headers={
         "Content-Type": "text/plain",
@@ -174,6 +215,62 @@ async fn handle_tools_json(ctx : RuntimeContext, conn : @http.ServerConnection) 
   conn.write_string(json)
 }
 
+/// Handle /api/chat/history - return conversation history for an agent
+async fn handle_chat_history(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "agent_id").unwrap_or("")
+  
+  if agent_id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing agent_id parameter")
+    return
+  }
+  
+  let history = ctx.agent_manager.get_conversation(agent_id)
+  let json_parts = history.map(fn(msg) {
+    "{\"role\":\"" + json_escape(msg.role) + "\",\"content\":\"" + json_escape(msg.content) + "\"}"
+  })
+  let json = "[" + json_parts.join(",") + "]"
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string(json)
+}
+
+/// Handle /api/chat/clear - clear conversation history for an agent
+async fn handle_chat_clear(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "agent_id").unwrap_or("")
+  
+  if agent_id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing agent_id parameter")
+    return
+  }
+  
+  ctx.agent_manager.clear_conversation(agent_id)
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"status\":\"ok\",\"message\":\"Conversation cleared for " + agent_id + "\"}")
+}
+
 /// Handle /api/chat - SSE streaming chat with agent
 async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
   // Parse query parameters from path
@@ -198,7 +295,7 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   }
   
   // Build messages for DeepSeek API with stream=true
-  let messages = agent.build_prompt(message, ctx.tool_registry)
+  let messages = agent.build_prompt(message, ctx.tool_registry, ctx.task_manager)
   let msgs = messages.map(fn(msg) {
     "{\"role\":\"" + json_escape(msg.role) + "\",\"content\":\"" + json_escape(msg.content) + "\"}"
   })
@@ -222,7 +319,11 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   
+  // Store user message in conversation history
+  ctx.agent_manager.add_message(agent_id, "user", message)
+  
   // Stream from DeepSeek API and forward chunks to client
+  let mut full_response = ""
   try {
     let client = @http.post_stream(url, headers=req_headers)
     defer client.close()
@@ -246,10 +347,15 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
         if owned.has_prefix("data: ") {
           let payload = line[6:].to_owned()
           if payload == "[DONE]" {
+            // Store assistant response in conversation history
+            ctx.agent_manager.add_message(agent_id, "assistant", full_response)
             conn.write_string("data: [DONE]\n\n")
           } else {
             match extract_content(payload) {
-              Some(content) => conn.write_string("data: " + content + "\n\n")
+              Some(content) => {
+                full_response = full_response + content
+                conn.write_string("data: " + content + "\n\n")
+              }
               None => ()
             }
           }
@@ -261,6 +367,182 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     _ => {
       conn.write_string("data: Error: Failed to connect to DeepSeek\n\n")
       conn.write_string("data: [DONE]\n\n")
+    }
+  }
+}
+
+/// Handle GET /api/tasks - list tasks, optionally filtered by agent_id
+async fn handle_tasks_list(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "agent_id").unwrap_or("")
+  
+  let tasks = if agent_id.length() > 0 {
+    ctx.task_manager.list_by_agent(agent_id)
+  } else {
+    ctx.task_manager.list_all()
+  }
+  
+  let json_parts = tasks.map(fn(t) {
+    let status_str = match t.status {
+      @lib.Pending => "\"pending\""
+      @lib.Running => "\"running\""
+      @lib.Completed => "\"completed\""
+      @lib.Failed(_) => "\"failed\""
+    }
+    let duration_str = t.duration_ms.to_string()
+    "{\"id\":\"" + json_escape(t.id) + "\",\"agent_id\":\"" + json_escape(t.agent_id) +
+      "\",\"description\":\"" + json_escape(t.description) + "\",\"status\":" + status_str +
+      ",\"priority\":" + t.priority.to_string() +
+      ",\"created_at\":\"" + json_escape(t.created_at) +
+      "\",\"updated_at\":\"" + json_escape(t.updated_at) +
+      "\",\"duration_ms\":" + duration_str + "}"
+  })
+  let json = "[" + json_parts.join(",") + "]"
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string(json)
+}
+
+/// Handle POST /api/tasks - create a new task
+async fn handle_task_create(ctx : RuntimeContext, body : &@io.Reader, conn : @http.ServerConnection) -> Unit {
+  // Read body
+  let body_data = body.read_all() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Cannot read request body")
+      return
+    }
+  }
+  let body_str = body_data.text() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Invalid UTF-8 in request body")
+      return
+    }
+  }
+  
+  // Parse JSON fields (simple parsing)
+  let id = extract_json_str(body_str, "id").unwrap_or("task_" + ctx.task_manager.count().to_string())
+  let agent_id = extract_json_str(body_str, "agent_id").unwrap_or("")
+  let description = extract_json_str(body_str, "description").unwrap_or("")
+  let priority_str = extract_json_str(body_str, "priority").unwrap_or("0")
+  let priority = @lib.parse_int(priority_str)
+  
+  if agent_id.length() == 0 || description.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing required fields: agent_id, description")
+    return
+  }
+  
+  let _task = ctx.task_manager.create_task(id, agent_id, description, priority)
+  
+  conn.send_response(201, "Created", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"status\":\"ok\",\"task_id\":\"" + json_escape(id) + "\"}")
+}
+
+/// Handle PUT /api/tasks - update task status
+async fn handle_task_update(ctx : RuntimeContext, path : String, body : &@io.Reader, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let task_id = extract_query_param(query, "id").unwrap_or("")
+  
+  // Also try to read from body
+  let body_data = body.read_all() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Cannot read request body")
+      return
+    }
+  }
+  let body_str = body_data.text() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Invalid UTF-8 in request body")
+      return
+    }
+  }
+  
+  let actual_id = if task_id.length() > 0 { task_id } else { extract_json_str(body_str, "id").unwrap_or("") }
+  let status_str = extract_json_str(body_str, "status").unwrap_or("")
+  
+  if actual_id.length() == 0 || status_str.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing required fields: id, status")
+    return
+  }
+  
+  let new_status = @lib.parse_status(status_str)
+  
+  let _ignore = ctx.task_manager.update_status(actual_id, new_status)
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"status\":\"ok\",\"task_id\":\"" + json_escape(actual_id) + "\"}")
+}
+
+/// Extract a simple string value from a JSON string by key
+fn extract_json_str(json : String, key : String) -> Option[String] {
+  // Try with space after colon first, then without
+  let search1 = "\"" + key + "\": \""
+  let search2 = "\"" + key + "\":\""
+  let start = match string_find(json, search1) {
+    Some(s) => Some(s)
+    None => string_find(json, search2)
+  }
+  match start {
+    None => None
+    Some(s) => {
+      let search = if string_find(json, search1) is Some(_) { search1 } else { search2 }
+      let value_start = s + search.length()
+      let mut result = ""
+      let mut i = value_start
+      while i < json.length() {
+        let ch = json[i]
+        if ch == '\\' && i + 1 < json.length() && json[i + 1] == '"' {
+          result = result + "\""
+          i = i + 2
+        } else if ch == '"' {
+          break
+        } else {
+          match ch.to_char() {
+            Some(c) => result = result + c.to_string()
+            None => ()
+          }
+          i = i + 1
+        }
+      }
+      Some(result)
     }
   }
 }

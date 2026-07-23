@@ -65,7 +65,7 @@ fn parse_csv_line(line : String) -> Array[String] {
 }
 
 /// Parse status string to TaskStatus
-fn parse_status(s : String) -> TaskStatus {
+pub fn parse_status(s : String) -> TaskStatus {
   match s {
     "completed" => Completed
     "running" => Running
@@ -85,7 +85,7 @@ fn priority_to_int(p : String) -> Int {
 }
 
 /// Parse string to int, default to 0 on failure
-fn parse_int(s : String) -> Int {
+pub fn parse_int(s : String) -> Int {
   let mut result = 0
   let mut i = 0
   let mut neg = false
@@ -130,6 +130,7 @@ async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
         max_tokens: parse_int(row[5]),
         temperature: parse_float(row[6]),
         tool_ids: row[7],
+        conversation: [],
       }
       agents[agent.id] = agent
     } else if row.length() >= 7 {
@@ -143,6 +144,7 @@ async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
         max_tokens: parse_int(row[5]),
         temperature: parse_float(row[6]),
         tool_ids: "",
+        conversation: [],
       }
       agents[agent.id] = agent
     }
