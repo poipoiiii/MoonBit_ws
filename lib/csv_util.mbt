@@ -166,7 +166,7 @@ async fn load_tools(file_path : String) -> Result[Map[String, Tool], String] {
     }
   }
   
-  let loaded_count = tools.size()
+  let loaded_count = tools.length()
   println("DEBUG load_tools: loaded=" + loaded_count.to_string())
   Ok(tools)
 }

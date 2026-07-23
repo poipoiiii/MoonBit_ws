@@ -117,7 +117,7 @@ async fn handle_index(conn : @http.ServerConnection) -> Unit {
 async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection) -> Unit {
   let agents = ctx.agent_manager.list_all()
   let json_parts = agents.map(fn(a) {
-    "{\"id\":\"\{a.id}\",\"name\":\"\{a.name}\",\"model\":\"\{a.model}\",\"max_tokens\":\{a.max_tokens}}"
+    "{\"id\":\"" + a.id + "\",\"name\":\"" + a.name + "\",\"model\":\"" + a.model + "\",\"max_tokens\":" + a.max_tokens.to_string() + "}"
   })
   let json = "[" + json_parts.join(",") + "]"
   
@@ -132,7 +132,7 @@ async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection)
 async fn handle_tools_json(ctx : RuntimeContext, conn : @http.ServerConnection) -> Unit {
   let tools = ctx.tool_registry.list_enabled()
   let json_parts = tools.map(fn(t) {
-    "{\"id\":\"\{t.id}\",\"name\":\"\{t.name}\",\"description\":\"\{t.description}\",\"enabled\":true}"
+    "{\"id\":\"" + t.id + "\",\"name\":\"" + t.name + "\",\"description\":\"" + t.description + "\",\"enabled\":true}"
   })
   let json = "[" + json_parts.join(",") + "]"
   
@@ -158,7 +158,7 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     Some(a) => a
     None => {
       conn.send_response(404, "Not Found", extra_headers={ "Content-Type": "text/plain" })
-      conn.write_string("Agent not found: \{agent_id}")
+      conn.write_string("Agent not found: " + agent_id)
       return
     }
   }
@@ -176,14 +176,14 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   
   // Call DeepSeek API via @http.post
   let msgs = messages.map(fn(msg) {
-    "{\"role\":\"\{msg.role}\",\"content\":\"\{msg.content}\"}"
+    "{\"role\":\"" + msg.role + "\",\"content\":\"" + msg.content + "\"}"
   })
   let msg_json = "[" + msgs.join(",") + "]"
-  let body_str = "{\"model\":\"\{ctx.model}\",\"messages\":" + msg_json +
-    ",\"max_tokens\":\{agent.max_tokens},\"temperature\":\{agent.temperature}}"
+  let body_str = "{\"model\":\"" + ctx.model + "\",\"messages\":" + msg_json +
+    ",\"max_tokens\":" + agent.max_tokens.to_string() + ",\"temperature\":" + agent.temperature.to_string() + "}"
   
   let url = "https://api.deepseek.com/v1/chat/completions"
-  let headers = Map([("Content-Type", "application/json"), ("Authorization", "Bearer \{ctx.api_key}")])
+  let headers = Map([("Content-Type", "application/json"), ("Authorization", "Bearer " + ctx.api_key)])
   
   // Make HTTP POST request - String implements Data trait
   let (response, data) = @http.post(url, body_str, headers=headers)
@@ -193,14 +193,14 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     let content = extract_content(text)
     match content {
       Some(c) => {
-        conn.write_string("data: \{c}\n\n")
+        conn.write_string("data: " + c + "\n\n")
       }
       None => {
         conn.write_string("data: Error: Failed to parse response\n\n")
       }
     }
   } else {
-    conn.write_string("data: Error: API error \{response.code}\n\n")
+    conn.write_string("data: Error: API error " + response.code.to_string() + "\n\n")
   }
   
   conn.close()
