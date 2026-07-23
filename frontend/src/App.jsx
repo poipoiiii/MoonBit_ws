@@ -25,7 +25,7 @@ function App() {
   const abortRef = useRef(null)
 
   const examplePrompts = [
-    '你好，请介绍一下你自己',
+    '你好，宁波距离山东多远',
     '帮我计算 256 * 48 等于多少',
     '读取当前目录下的 agents.csv 文件',
     '有哪些工具可以使用？',
