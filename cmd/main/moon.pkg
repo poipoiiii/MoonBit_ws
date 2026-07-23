@@ -1,0 +1,11 @@
+import {
+  "username/agent-runtime/lib",
+  "moonbitlang/async",
+  "moonbitlang/async/http",
+  "moonbitlang/async/io",
+  "moonbitlang/async/socket",
+  "moonbitlang/core/env",
+}
+options(
+  "is-main": true,
+)

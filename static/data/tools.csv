@@ -1,0 +1,8 @@
+id,name,description,input_schema,enabled,version
+tool_001,search_web,搜索引擎查询外部信息,"{""query"": ""string""}",true,1.0.0
+tool_002,read_file,读取本地文件内容,"{""path"": ""string"", ""encoding"": ""string""}",true,1.0.1
+tool_003,write_file,写入内容到本地文件,"{""path"": ""string"", ""content"": ""string""}",true,1.0.1
+tool_004,exec_command,执行Shell命令,"{""command"": ""string"", ""timeout"": ""int""}",false,0.9.0
+tool_005,analyze_csv,解析和分析CSV数据,"{""file_path"": ""string"", ""operation"": ""string""}",true,1.0.0
+tool_006,send_email,发送电子邮件通知,"{""to"": ""string"", ""subject"": ""string"", ""body"": ""string""}",true,1.0.0
+tool_007,calc_expression,计算数学表达式,"{""expression"": ""string""}",true,1.0.2

@@ -1,0 +1,8 @@
+id,agent_id,description,status,priority,created_at,updated_at,duration_ms
+task_001,agent_001,为MoonBit项目添加单元测试,completed,high,2026-07-20 09:00:00,2026-07-20 09:15:30,930000
+task_002,agent_002,分析上季度销售数据的趋势,completed,medium,2026-07-20 10:00:00,2026-07-20 10:08:45,525000
+task_003,agent_003,规划用户注册功能的开发步骤,running,high,2026-07-21 14:00:00,2026-07-21 14:05:12,312000
+task_004,agent_001,修复API接口的并发bug,pending,high,2026-07-22 08:30:00,,0
+task_005,agent_004,归档昨日对话上下文,completed,low,2026-07-22 09:00:00,2026-07-22 09:01:20,80000
+task_006,agent_005,调用外部搜索API获取最新资讯,running,medium,2026-07-23 10:00:00,2026-07-23 10:02:33,153000
+task_007,agent_003,制定Q3产品路线图,pending,medium,2026-07-23 11:00:00,,0
