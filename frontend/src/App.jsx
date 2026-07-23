@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { fetchAgents, fetchTools, createChatStream } from './api'
 import { useTheme } from './ThemeContext'
+import MarkdownMessage from './components/MarkdownMessage'
 
 function App() {
   const { theme, toggleTheme } = useTheme()
@@ -375,22 +376,34 @@ function App() {
               Select an agent to get started
             </div>
           )}
-          {logs.map((log, index) => (
-            <div
-              key={index}
-              className="mb-1 leading-relaxed whitespace-pre-wrap"
-              style={{
-                color: log.type === 'sys' ? 'var(--log-sys)' :
-                       log.type === 'user' ? 'var(--log-user)' :
-                       'var(--log-agent)'
-              }}
-            >
-              {log.text}
-              {log.id && isStreaming && index === logs.length - 1 && (
-                <span className="inline-block w-2 h-4 ml-0.5 animate-pulse" style={{ backgroundColor: 'var(--cursor-color)' }} />
-              )}
-            </div>
-          ))}
+          {logs.map((log, index) => {
+            const isAgent = log.type === 'agent'
+            return (
+              <div
+                key={index}
+                className={`mb-1${isAgent ? '' : ' leading-relaxed whitespace-pre-wrap'}`}
+                style={{
+                  color: log.type === 'sys' ? 'var(--log-sys)' :
+                         log.type === 'user' ? 'var(--log-user)' :
+                         'var(--log-agent)'
+                }}
+              >
+                {isAgent ? (
+                  <MarkdownMessage
+                    text={log.text}
+                    isStreaming={isStreaming && index === logs.length - 1}
+                  />
+                ) : (
+                  <>
+                    {log.text}
+                    {log.id && isStreaming && index === logs.length - 1 && (
+                      <span className="inline-block w-2 h-4 ml-0.5 animate-pulse" style={{ backgroundColor: 'var(--cursor-color)' }} />
+                    )}
+                  </>
+                )}
+              </div>
+            )
+          })}
           <div ref={logEndRef} />
         </div>
 

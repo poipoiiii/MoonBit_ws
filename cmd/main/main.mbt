@@ -197,14 +197,16 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     }
   }
   
-  // Build messages for DeepSeek API
+  // Build messages for DeepSeek API with stream=true
   let messages = agent.build_prompt(message)
   let msgs = messages.map(fn(msg) {
     "{\"role\":\"" + json_escape(msg.role) + "\",\"content\":\"" + json_escape(msg.content) + "\"}"
   })
   let msg_json = "[" + msgs.join(",") + "]"
   let body_str = "{\"model\":\"" + json_escape(ctx.model) + "\",\"messages\":" + msg_json +
-    ",\"max_tokens\":" + agent.max_tokens.to_string() + ",\"temperature\":" + agent.temperature.to_string() + "}"
+    ",\"max_tokens\":" + agent.max_tokens.to_string() +
+    ",\"temperature\":" + agent.temperature.to_string() +
+    ",\"stream\":true}"
   
   let url = "https://api.deepseek.com/v1/chat/completions"
   let req_headers = Map([
@@ -212,34 +214,7 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     ("Authorization", "Bearer " + ctx.api_key),
   ])
   
-  // Call DeepSeek API first (before sending SSE headers)
-  let (code, text) = try {
-    let (resp, body) = @http.post(url, body_str, headers=req_headers)
-    let txt = body.text() catch { _ => "Error: Invalid UTF-8" }
-    (resp.code, txt)
-  } catch {
-    _ => {
-      // DeepSeek API unreachable - send error response (not SSE)
-      conn.send_response(502, "Bad Gateway", extra_headers={
-        "Content-Type": "text/plain",
-        "Access-Control-Allow-Origin": ctx.cors_origin,
-      })
-      conn.write_string("Chat API error: Failed to connect to DeepSeek")
-      return
-    }
-  }
-  
-  // Check API response status
-  if code != 200 {
-    conn.send_response(code, "API Error", extra_headers={
-      "Content-Type": "text/plain",
-      "Access-Control-Allow-Origin": ctx.cors_origin,
-    })
-    conn.write_string("Chat API error: DeepSeek returned " + code.to_string())
-    return
-  }
-  
-  // API call succeeded - send SSE response headers
+  // Send SSE response headers first
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -247,18 +222,47 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   
-  // Parse and stream the response content
-  let content = extract_content(text)
-  match content {
-    Some(c) => {
-      conn.write_string("data: " + c + "\n\n")
+  // Stream from DeepSeek API and forward chunks to client
+  try {
+    let client = @http.post_stream(url, headers=req_headers)
+    defer client.close()
+    
+    client.write(body_str)
+    client.flush()
+    let resp = client.end_request()
+    
+    if resp.code != 200 {
+      conn.write_string("data: Error: DeepSeek returned \{resp.code}\n\n")
+      conn.write_string("data: [DONE]\n\n")
+      return
     }
-    None => {
-      conn.write_string("data: Error: Failed to parse response\n\n")
+    
+    // Forward streaming chunks from DeepSeek to client
+    while client.read_some() is Some(data) {
+      let text = @utf8.decode(data) catch { _ => continue }
+      let lines = text.split("\n")
+      for line in lines {
+        let owned = line.to_owned()
+        if owned.has_prefix("data: ") {
+          let payload = line[6:].to_owned()
+          if payload == "[DONE]" {
+            conn.write_string("data: [DONE]\n\n")
+          } else {
+            match extract_content(payload) {
+              Some(content) => conn.write_string("data: " + content + "\n\n")
+              None => ()
+            }
+          }
+        }
+      }
+      conn.flush()
+    }
+  } catch {
+    _ => {
+      conn.write_string("data: Error: Failed to connect to DeepSeek\n\n")
+      conn.write_string("data: [DONE]\n\n")
     }
   }
-  // Note: Don't call conn.close() - the server will call end_response()
-  // to properly flush and terminate the chunked response
 }
 
 /// Simple string search for a substring
@@ -386,7 +390,7 @@ fn json_escape(s : String) -> String {
   result
 }
 
-/// Simple JSON content extraction from DeepSeek response
+/// Simple JSON content extraction from DeepSeek response (handles JSON escapes)
 fn extract_content(json_str : String) -> Option[String] {
   let prefix = "\"content\":\""
   let start = string_find(json_str, prefix)
@@ -398,9 +402,30 @@ fn extract_content(json_str : String) -> Option[String] {
       let mut i = value_start
       while i < json_str.length() {
         let ch = json_str[i]
-        if ch == '\\' && i + 1 < json_str.length() && json_str[i + 1] == '"' {
-          result = result + "\""
-          i = i + 2
+        if ch == '\\' && i + 1 < json_str.length() {
+          let next = json_str[i + 1]
+          if next == '"' {
+            result = result + "\""
+            i = i + 2
+          } else if next == 'n' {
+            result = result + "\n"
+            i = i + 2
+          } else if next == 'r' {
+            result = result + "\r"
+            i = i + 2
+          } else if next == 't' {
+            result = result + "\t"
+            i = i + 2
+          } else if next == '\\' {
+            result = result + "\\"
+            i = i + 2
+          } else {
+            match ch.to_char() {
+              Some(c) => result = result + c.to_string()
+              None => ()
+            }
+            i = i + 1
+          }
         } else if ch == '"' {
           break
         } else {

@@ -5,6 +5,7 @@ import {
   "moonbitlang/async/io",
   "moonbitlang/async/socket",
   "moonbitlang/core/env",
+  "moonbitlang/core/encoding/utf8",
 }
 options(
   "is-main": true,
