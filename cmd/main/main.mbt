@@ -140,6 +140,8 @@ async fn handle_request(
       handle_index(conn)
     } else if path == "/api/agents" {
       handle_agents_json(ctx, conn)
+    } else if path.has_prefix("/api/agents/detail") {
+      handle_agent_detail(ctx, path, conn)
     } else if path.has_prefix("/api/agents/stats") {
       handle_agent_stats(ctx, path, conn)
     } else if path == "/api/tools" {
@@ -214,6 +216,99 @@ async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection)
       "\"" + stats_json + "}"
   })
   let json = "[" + json_parts.join(",") + "]"
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string(json)
+}
+
+/// Handle /api/agents/detail - return detailed agent info with tools, tasks, and stats
+async fn handle_agent_detail(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "agent_id").unwrap_or("")
+  
+  if agent_id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing agent_id parameter")
+    return
+  }
+  
+  // Find the agent
+  let agent = match ctx.agent_manager.find(agent_id) {
+    Some(a) => a
+    None => {
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Agent not found: " + agent_id)
+      return
+    }
+  }
+  
+  // Get tools assigned to this agent
+  let tools = agent.get_tools(ctx.tool_registry)
+  let tools_json = tools.map(fn(t) {
+    "{\"id\":\"" + json_escape(t.id) + "\",\"name\":\"" + json_escape(t.name) +
+      "\",\"description\":\"" + json_escape(t.description) + "\",\"version\":\"" +
+      json_escape(t.version) + "\",\"enabled\":" + (if t.enabled { "true" } else { "false" }) + "}"
+  })
+  let tools_array = "[" + tools_json.join(",") + "]"
+  
+  // Get tasks for this agent
+  let tasks = ctx.task_manager.list_by_agent(agent_id)
+  let tasks_json = tasks.map(fn(t) {
+    let status_str = match t.status {
+      @lib.Pending => "\"pending\""
+      @lib.Running => "\"running\""
+      @lib.Completed => "\"completed\""
+      @lib.Failed(_) => "\"failed\""
+    }
+    "{\"id\":\"" + json_escape(t.id) + "\",\"description\":\"" + json_escape(t.description) +
+      "\",\"status\":" + status_str + ",\"priority\":" + t.priority.to_string() +
+      ",\"created_at\":\"" + json_escape(t.created_at) +
+      "\",\"updated_at\":\"" + json_escape(t.updated_at) +
+      "\",\"duration_ms\":" + t.duration_ms.to_string() + "}"
+  })
+  let tasks_array = "[" + tasks_json.join(",") + "]"
+  
+  // Get stats
+  let stats = ctx.stats_manager.get_stats(agent_id)
+  let stats_json = match stats {
+    Some(s) => "{\"total_conversations\":" + s.total_conversations.to_string() +
+      ",\"total_input_chars\":" + s.total_input_chars.to_string() +
+      ",\"total_output_chars\":" + s.total_output_chars.to_string() +
+      ",\"total_prompt_tokens\":" + s.total_prompt_tokens.to_string() +
+      ",\"total_completion_tokens\":" + s.total_completion_tokens.to_string() +
+      ",\"last_active_at\":\"" + json_escape(s.last_active_at) + "\"}"
+    None => "null"
+  }
+  
+  // Get conversation history summary (count only, to avoid large responses)
+  let history = ctx.agent_manager.get_conversation(agent_id)
+  let history_count = history.length()
+  
+  // Build the full response
+  let json = "{\"id\":\"" + json_escape(agent.id) +
+    "\",\"name\":\"" + json_escape(agent.name) +
+    "\",\"model\":\"" + json_escape(agent.model) +
+    "\",\"instruction\":\"" + json_escape(agent.instruction) +
+    "\",\"system_prompt\":\"" + json_escape(agent.system_prompt) +
+    "\",\"max_tokens\":" + agent.max_tokens.to_string() +
+    ",\"temperature\":" + agent.temperature.to_string() +
+    ",\"tool_ids\":\"" + json_escape(agent.tool_ids) +
+    "\",\"tools\":" + tools_array +
+    ",\"tasks\":" + tasks_array +
+    ",\"stats\":" + stats_json +
+    ",\"conversation_count\":" + history_count.to_string() + "}"
   
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": "application/json; charset=utf-8",
