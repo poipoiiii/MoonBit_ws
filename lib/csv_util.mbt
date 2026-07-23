@@ -218,3 +218,107 @@ async fn load_tasks(file_path : String) -> Result[Map[String, Task], String] {
   }
   Ok(tasks)
 }
+
+/// Escape a field for CSV output (wrap in quotes if contains comma, quote, or newline)
+fn csv_escape(s : String) -> String {
+  let needs_quoting = string_contains(s, ",") || string_contains(s, "\"") || string_contains(s, "\n") || string_contains(s, "\r")
+  if !needs_quoting {
+    return s
+  }
+  let escaped = csv_replace(s, "\"", "\"\"")
+  "\"" + escaped + "\""
+}
+
+/// Simple string replace (avoids labeled param issue with built-in replace)
+fn csv_replace(s : String, old : String, new : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < s.length() {
+    let mut matched = true
+    let mut j = 0
+    while j < old.length() && i + j < s.length() {
+      if s[i + j] != old[j] { matched = false; break }
+      j = j + 1
+    }
+    if matched && j == old.length() {
+      result = result + new
+      i = i + old.length()
+    } else {
+      match s[i].to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
+      i = i + 1
+    }
+  }
+  result
+}
+
+/// Simple string contains check
+fn string_contains(s : String, pat : String) -> Bool {
+  let max_start = s.length() - pat.length()
+  if max_start < 0 { return false }
+  let mut i = 0
+  while i <= max_start {
+    let mut matched = true
+    let mut j = 0
+    while j < pat.length() {
+      if s[i + j] != pat[j] { matched = false; break }
+      j = j + 1
+    }
+    if matched { return true }
+    i = i + 1
+  }
+  false
+}
+
+/// Save agents to CSV file  
+async fn save_agents_csv(agents : Map[String, Agent], file_path : String) -> Result[Unit, String] {
+  let mut content = "id,name,model,instruction,system_prompt,max_tokens,temperature,tool_ids\n"
+  for agent in agents.values() {
+    content = content + agent.id + ","
+    content = content + csv_escape(agent.name) + ","
+    content = content + csv_escape(agent.model) + ","
+    content = content + csv_escape(agent.instruction) + ","
+    content = content + csv_escape(agent.system_prompt) + ","
+    content = content + agent.max_tokens.to_string() + ","
+    content = content + agent.temperature.to_string() + ","
+    content = content + csv_escape(agent.tool_ids) + "\n"
+  }
+  
+  @fs.write_file(file_path, content, create_mode=@fs.CreateOrTruncate) catch {
+    _ => return Err("Cannot write file: " + file_path)
+  }
+  Ok(())
+}
+
+/// Save tasks to CSV file
+async fn save_tasks_csv(tasks : Map[String, Task], file_path : String) -> Result[Unit, String] {
+  let mut content = "id,agent_id,description,status,priority,created_at,updated_at,duration_ms\n"
+  for task in tasks.values() {
+    let status_str = match task.status {
+      Pending => "pending"
+      Running => "running"
+      Completed => "completed"
+      Failed(_) => "failed"
+    }
+    let priority_str = match task.priority {
+      3 => "high"
+      2 => "medium"
+      _ => "low"
+    }
+    content = content + task.id + ","
+    content = content + task.agent_id + ","
+    content = content + csv_escape(task.description) + ","
+    content = content + status_str + ","
+    content = content + priority_str + ","
+    content = content + task.created_at + ","
+    content = content + task.updated_at + ","
+    content = content + task.duration_ms.to_string() + "\n"
+  }
+  
+  @fs.write_file(file_path, content, create_mode=@fs.CreateOrTruncate) catch {
+    _ => return Err("Cannot write file: " + file_path)
+  }
+  Ok(())
+}

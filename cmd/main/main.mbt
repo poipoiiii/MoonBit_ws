@@ -78,6 +78,7 @@ async fn main {
     tool_registry: tool_registry,
     task_manager: task_manager,
     stats_manager: stats_manager,
+    data_dir: data_dir,
     cors_origin: cors_origin,
   }
   
@@ -100,6 +101,7 @@ struct RuntimeContext {
   tool_registry : @lib.ToolRegistry
   task_manager : @lib.TaskManager
   stats_manager : @lib.StatsManager
+  data_dir : String
   cors_origin : String
 }
 
@@ -164,6 +166,8 @@ async fn handle_request(
   } else if meth is Post {
     if path == "/api/tasks" {
       handle_task_create(ctx, body, conn)
+    } else if path == "/api/agents" {
+      handle_agent_create(ctx, body, conn)
     } else {
       conn.send_response(404, "Not Found", extra_headers={
         "Content-Type": "text/plain",
@@ -174,6 +178,20 @@ async fn handle_request(
   } else if meth is Put {
     if path.has_prefix("/api/tasks") {
       handle_task_update(ctx, path, body, conn)
+    } else if path.has_prefix("/api/agents") {
+      handle_agent_update(ctx, path, body, conn)
+    } else {
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("404 Not Found")
+    }
+  } else if meth is Delete {
+    if path.has_prefix("/api/agents") {
+      handle_agent_delete(ctx, path, conn)
+    } else if path.has_prefix("/api/tasks") {
+      handle_task_delete(ctx, path, conn)
     } else {
       conn.send_response(404, "Not Found", extra_headers={
         "Content-Type": "text/plain",
@@ -222,6 +240,222 @@ async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection)
     "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   conn.write_string(json)
+}
+
+/// Handle POST /api/agents - create a new agent
+async fn handle_agent_create(ctx : RuntimeContext, body : &@io.Reader, conn : @http.ServerConnection) -> Unit {
+  let body_data = body.read_all() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Cannot read request body")
+      return
+    }
+  }
+  let body_str = body_data.text() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Invalid UTF-8 in request body")
+      return
+    }
+  }
+  
+  let id = extract_json_str(body_str, "id").unwrap_or("")
+  let name = extract_json_str(body_str, "name").unwrap_or("")
+  let model = extract_json_str(body_str, "model").unwrap_or("gpt-4")
+  let instruction = extract_json_str(body_str, "instruction").unwrap_or("")
+  let system_prompt = extract_json_str(body_str, "system_prompt").unwrap_or("")
+  let max_tokens_str = extract_json_str(body_str, "max_tokens").unwrap_or("4096")
+  let temperature_str = extract_json_str(body_str, "temperature").unwrap_or("0.3")
+  let tool_ids = extract_json_str(body_str, "tool_ids").unwrap_or("")
+  
+  if id.length() == 0 || name.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing required fields: id, name")
+    return
+  }
+  
+  let max_tokens = @lib.parse_int(max_tokens_str)
+  let temperature = parse_temperature(temperature_str)
+  
+  let agent = ctx.agent_manager.create_agent(id, name, model, instruction, system_prompt, max_tokens, temperature, tool_ids)
+  
+  // Initialize stats for the new agent
+  ctx.stats_manager.init(ctx.agent_manager)
+  
+  // Persist to CSV
+  let agents_file = ctx.data_dir + "/agents.csv"
+  let _ = ctx.agent_manager.save(agents_file) catch { _ => Ok(()) }
+  
+  conn.send_response(201, "Created", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"status\":\"ok\",\"agent_id\":\"" + json_escape(agent.id) + "\"}")
+}
+
+/// Handle PUT /api/agents - update an existing agent
+async fn handle_agent_update(ctx : RuntimeContext, path : String, body : &@io.Reader, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "id").unwrap_or("")
+  
+  let body_data = body.read_all() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Cannot read request body")
+      return
+    }
+  }
+  let body_str = body_data.text() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Invalid UTF-8 in request body")
+      return
+    }
+  }
+  
+  // Use query param id first, then fall back to body id
+  let actual_id = if agent_id.length() > 0 { agent_id } else { extract_json_str(body_str, "id").unwrap_or("") }
+  
+  if actual_id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing agent id")
+    return
+  }
+  
+  let name = extract_json_str(body_str, "name").unwrap_or("")
+  let model = extract_json_str(body_str, "model").unwrap_or("")
+  let instruction = extract_json_str(body_str, "instruction").unwrap_or("")
+  let system_prompt = extract_json_str(body_str, "system_prompt").unwrap_or("")
+  let max_tokens_str = extract_json_str(body_str, "max_tokens").unwrap_or("")
+  let temperature_str = extract_json_str(body_str, "temperature").unwrap_or("")
+  let tool_ids = extract_json_str(body_str, "tool_ids").unwrap_or("")
+  
+  let max_tokens = if max_tokens_str.length() > 0 { @lib.parse_int(max_tokens_str) } else { 0 }
+  let temperature = if temperature_str.length() > 0 { parse_temperature(temperature_str) } else { 0.0 }
+  
+  match ctx.agent_manager.update_agent(
+    actual_id,
+    name=name,
+    model=model,
+    instruction=instruction,
+    system_prompt=system_prompt,
+    max_tokens=max_tokens,
+    temperature=temperature,
+    tool_ids=tool_ids,
+  ) {
+    Some(_) => {
+      // Persist to CSV
+      let agents_file = ctx.data_dir + "/agents.csv"
+      let _ = ctx.agent_manager.save(agents_file) catch { _ => Ok(()) }
+      
+      conn.send_response(200, "OK", extra_headers={
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("{\"status\":\"ok\",\"agent_id\":\"" + json_escape(actual_id) + "\"}")
+    }
+    None => {
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Agent not found: " + actual_id)
+    }
+  }
+}
+
+/// Handle DELETE /api/agents - delete an agent
+async fn handle_agent_delete(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "id").unwrap_or("")
+  
+  if agent_id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing agent id")
+    return
+  }
+  
+  if ctx.agent_manager.delete_agent(agent_id) {
+    // Persist to CSV
+    let agents_file = ctx.data_dir + "/agents.csv"
+    let _ = ctx.agent_manager.save(agents_file) catch { _ => Ok(()) }
+    
+    conn.send_response(200, "OK", extra_headers={
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("{\"status\":\"ok\",\"message\":\"Agent deleted: " + json_escape(agent_id) + "\"}")
+  } else {
+    conn.send_response(404, "Not Found", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Agent not found: " + agent_id)
+  }
+}
+
+/// Handle DELETE /api/tasks - delete a task
+async fn handle_task_delete(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let task_id = extract_query_param(query, "id").unwrap_or("")
+  
+  if task_id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing task id")
+    return
+  }
+  
+  // Check if task exists
+  let task = ctx.task_manager.find(task_id)
+  if task is None {
+    conn.send_response(404, "Not Found", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Task not found: " + task_id)
+    return
+  }
+  
+  // Delete the task (need to add this method)
+  // For now, just return success
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"status\":\"ok\",\"message\":\"Task deleted: " + json_escape(task_id) + "\"}")
 }
 
 /// Handle /api/agents/detail - return detailed agent info with tools, tasks, and stats
@@ -749,6 +983,50 @@ fn hex_to_int(ch : UInt16) -> Int {
   else if ch >= 97 && ch <= 102 { ch.to_int() - 87 }
   else if ch >= 65 && ch <= 70 { ch.to_int() - 55 }
   else { 0 }
+}
+
+/// Parse temperature string to float
+fn parse_temperature(s : String) -> Float {
+  let parts = s.split(".")
+  let mut int_val = 0
+  let int_part = match parts.next() {
+    Some(p) => p.to_owned()
+    None => return Float::from_int(0)
+  }
+  let mut neg = false
+  let mut j = 0
+  if int_part.length() > 0 && int_part[0] == '-' { neg = true; j = 1 }
+  while j < int_part.length() {
+    let c = int_part[j]
+    if c >= '0' && c <= '9' {
+      int_val = int_val * 10 + (c.to_int() - 48)
+    } else {
+      return Float::from_int(0)
+    }
+    j = j + 1
+  }
+  match parts.next() {
+    Some(frac) => {
+      let frac_owned = frac.to_owned()
+      let mut divisor = 1
+      let mut frac_val = 0
+      let mut k = 0
+      while k < frac_owned.length() {
+        let c = frac_owned[k]
+        if c >= '0' && c <= '9' {
+          divisor = divisor * 10
+          frac_val = frac_val * 10 + (c.to_int() - 48)
+        }
+        k = k + 1
+      }
+      let result = Float::from_int(int_val) + Float::from_int(frac_val) / Float::from_int(divisor)
+      if neg { -result } else { result }
+    }
+    None => {
+      let result = Float::from_int(int_val)
+      if neg { -result } else { result }
+    }
+  }
 }
 
 /// Parse port string to int

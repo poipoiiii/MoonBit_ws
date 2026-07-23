@@ -99,6 +99,22 @@ pub fn TaskManager::update_status(self : TaskManager, id : String, status : Task
   Some(task)
 }
 
+/// Delete a task by ID
+pub fn TaskManager::delete_task(self : TaskManager, id : String) -> Bool {
+  let exists = self.tasks.get(id) is Some(_)
+  if exists {
+    self.tasks.remove(id)
+    true
+  } else {
+    false
+  }
+}
+
+/// Save tasks to CSV file
+pub async fn TaskManager::save(self : TaskManager, file_path : String) -> Result[Unit, String] {
+  save_tasks_csv(self.tasks, file_path)
+}
+
 /// Get all pending tasks (unfiltered, sorted by priority)
 fn TaskManager::get_pending_tasks(self : TaskManager) -> Array[Task] {
   let result : Array[Task] = []

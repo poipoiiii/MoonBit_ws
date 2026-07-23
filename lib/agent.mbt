@@ -66,6 +66,99 @@ pub fn AgentManager::clear_conversation(self : AgentManager, agent_id : String) 
   }
 }
 
+/// Create a new agent
+pub fn AgentManager::create_agent(
+  self : AgentManager,
+  id : String,
+  name : String,
+  model : String,
+  instruction : String,
+  system_prompt : String,
+  max_tokens : Int,
+  temperature : Float,
+  tool_ids : String,
+) -> Agent {
+  let agent = Agent::{
+    id: id,
+    name: name,
+    model: model,
+    instruction: instruction,
+    system_prompt: system_prompt,
+    max_tokens: max_tokens,
+    temperature: temperature,
+    tool_ids: tool_ids,
+    conversation: [],
+  }
+  self.agents[id] = agent
+  agent
+}
+
+/// Update an existing agent's mutable fields
+pub fn AgentManager::update_agent(
+  self : AgentManager,
+  id : String,
+  name~ : String = "",
+  model~ : String = "",
+  instruction~ : String = "",
+  system_prompt~ : String = "",
+  max_tokens~ : Int = 0,
+  temperature~ : Float = 0.0,
+  tool_ids~ : String = "",
+) -> Option[Agent] {
+  match self.agents.get(id) {
+    None => None
+    Some(existing) => {
+      let new_name = if name.length() > 0 { name } else { existing.name }
+      let new_model = if model.length() > 0 { model } else { existing.model }
+      let new_instruction = if instruction.length() > 0 { instruction } else { existing.instruction }
+      let new_system_prompt = if system_prompt.length() > 0 { system_prompt } else { existing.system_prompt }
+      let new_max_tokens = if max_tokens > 0 { max_tokens } else { existing.max_tokens }
+      let new_temperature = if temperature > 0.0 { temperature } else { existing.temperature }
+      let new_tool_ids = if tool_ids.length() > 0 { tool_ids } else { existing.tool_ids }
+      
+      let updated = Agent::{
+        id: existing.id,
+        name: new_name,
+        model: new_model,
+        instruction: new_instruction,
+        system_prompt: new_system_prompt,
+        max_tokens: new_max_tokens,
+        temperature: new_temperature,
+        tool_ids: new_tool_ids,
+        conversation: existing.conversation,
+      }
+      self.agents[id] = updated
+      Some(updated)
+    }
+  }
+}
+
+/// Delete an agent by ID
+pub fn AgentManager::delete_agent(self : AgentManager, id : String) -> Bool {
+  let exists = self.agents.get(id) is Some(_)
+  if exists {
+    self.agents.remove(id)
+    true
+  } else {
+    false
+  }
+}
+
+/// Save agents to CSV file
+pub async fn AgentManager::save(self : AgentManager, file_path : String) -> Result[Unit, String] {
+  save_agents_csv(self.agents, file_path)
+}
+
+/// Get underlying agents map
+pub fn AgentManager::get_agents(self : AgentManager) -> Map[String, Agent] {
+  self.agents
+}
+
+/// Get agents file path from data directory
+pub fn agents_file_path(data_dir : String) -> String {
+  data_dir + "/agents.csv"
+}
+
 /// Get tools assigned to this agent from the registry
 pub fn Agent::get_tools(self : Agent, registry : ToolRegistry) -> Array[Tool] {
   if self.tool_ids.length() == 0 {
