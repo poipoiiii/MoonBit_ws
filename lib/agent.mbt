@@ -87,6 +87,80 @@ pub fn Agent::get_tools(self : Agent, registry : ToolRegistry) -> Array[Tool] {
   result
 }
 
+/// Stats manager - track agent usage statistics
+pub struct StatsManager {
+  stats : Map[String, AgentStats]
+}
+
+/// Create a new stats manager
+pub fn StatsManager::new(stats : Map[String, AgentStats]) -> StatsManager {
+  { stats: stats }
+}
+
+/// Initialize stats from agent manager
+pub fn StatsManager::init(self : StatsManager, agent_manager : AgentManager) -> Unit {
+  let agents = agent_manager.list_all()
+  for agent in agents {
+    if self.stats.get(agent.id) is None {
+      self.stats[agent.id] = AgentStats::{
+        agent_id: agent.id,
+        total_conversations: 0,
+        total_input_chars: 0,
+        total_output_chars: 0,
+        total_prompt_tokens: 0,
+        total_completion_tokens: 0,
+        last_active_at: "",
+      }
+    }
+  }
+}
+
+/// Record a conversation for an agent
+pub fn StatsManager::record_conversation(
+  self : StatsManager,
+  agent_id : String,
+  input_chars : Int,
+  output_chars : Int,
+  prompt_tokens~ : Int = 0,
+  completion_tokens~ : Int = 0
+) -> Unit {
+  match self.stats.get(agent_id) {
+    Some(s) => {
+      s.total_conversations = s.total_conversations + 1
+      s.total_input_chars = s.total_input_chars + input_chars
+      s.total_output_chars = s.total_output_chars + output_chars
+      s.total_prompt_tokens = s.total_prompt_tokens + prompt_tokens
+      s.total_completion_tokens = s.total_completion_tokens + completion_tokens
+      s.last_active_at = now_str()
+    }
+    None => {
+      self.stats[agent_id] = AgentStats::{
+        agent_id: agent_id,
+        total_conversations: 1,
+        total_input_chars: input_chars,
+        total_output_chars: output_chars,
+        total_prompt_tokens: prompt_tokens,
+        total_completion_tokens: completion_tokens,
+        last_active_at: now_str(),
+      }
+    }
+  }
+}
+
+/// Get stats for a specific agent
+pub fn StatsManager::get_stats(self : StatsManager, agent_id : String) -> Option[AgentStats] {
+  self.stats.get(agent_id)
+}
+
+/// Get stats for all agents
+pub fn StatsManager::get_all_stats(self : StatsManager) -> Array[AgentStats] {
+  let result : Array[AgentStats] = []
+  for s in self.stats.values() {
+    result.push(s)
+  }
+  result
+}
+
 /// Build system prompt with tool information, tasks and conversation history injected
 pub fn Agent::build_prompt(
   self : Agent,

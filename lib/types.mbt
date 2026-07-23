@@ -77,3 +77,14 @@ pub struct SseEvent {
   event : String
   data : String
 }
+
+/// Agent usage statistics
+pub struct AgentStats {
+  agent_id : String
+  mut total_conversations : Int
+  mut total_input_chars : Int
+  mut total_output_chars : Int
+  mut total_prompt_tokens : Int
+  mut total_completion_tokens : Int
+  mut last_active_at : String
+}

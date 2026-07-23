@@ -65,6 +65,11 @@ async fn main {
     }
   }
   
+  // Initialize stats manager from agents
+  let stats_manager = @lib.StatsManager::new(Map([], capacity=agent_manager.count()))
+  stats_manager.init(agent_manager)
+  println("Tracking stats for \{agent_manager.count()} agents")
+  
   // Create runtime context
   let ctx = RuntimeContext::{
     api_key: api_key,
@@ -72,6 +77,7 @@ async fn main {
     agent_manager: agent_manager,
     tool_registry: tool_registry,
     task_manager: task_manager,
+    stats_manager: stats_manager,
     cors_origin: cors_origin,
   }
   
@@ -93,6 +99,7 @@ struct RuntimeContext {
   agent_manager : @lib.AgentManager
   tool_registry : @lib.ToolRegistry
   task_manager : @lib.TaskManager
+  stats_manager : @lib.StatsManager
   cors_origin : String
 }
 
@@ -133,6 +140,8 @@ async fn handle_request(
       handle_index(conn)
     } else if path == "/api/agents" {
       handle_agents_json(ctx, conn)
+    } else if path.has_prefix("/api/agents/stats") {
+      handle_agent_stats(ctx, path, conn)
     } else if path == "/api/tools" {
       handle_tools_json(ctx, conn)
     } else if path.has_prefix("/api/tasks") {
@@ -189,9 +198,64 @@ async fn handle_index(conn : @http.ServerConnection) -> Unit {
 async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection) -> Unit {
   let agents = ctx.agent_manager.list_all()
   let json_parts = agents.map(fn(a) {
-    "{\"id\":\"" + json_escape(a.id) + "\",\"name\":\"" + json_escape(a.name) + "\",\"model\":\"" + json_escape(a.model) + "\",\"max_tokens\":" + a.max_tokens.to_string() + ",\"tool_ids\":\"" + json_escape(a.tool_ids) + "\"}"
+    let stats = ctx.stats_manager.get_stats(a.id)
+    let stats_json = match stats {
+      Some(s) => ",\"stats\":{\"total_conversations\":" + s.total_conversations.to_string() +
+        ",\"total_input_chars\":" + s.total_input_chars.to_string() +
+        ",\"total_output_chars\":" + s.total_output_chars.to_string() +
+        ",\"total_prompt_tokens\":" + s.total_prompt_tokens.to_string() +
+        ",\"total_completion_tokens\":" + s.total_completion_tokens.to_string() +
+        ",\"last_active_at\":\"" + json_escape(s.last_active_at) + "\"}"
+      None => ",\"stats\":null"
+    }
+    "{\"id\":\"" + json_escape(a.id) + "\",\"name\":\"" + json_escape(a.name) +
+      "\",\"model\":\"" + json_escape(a.model) + "\",\"max_tokens\":" +
+      a.max_tokens.to_string() + ",\"tool_ids\":\"" + json_escape(a.tool_ids) +
+      "\"" + stats_json + "}"
   })
   let json = "[" + json_parts.join(",") + "]"
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string(json)
+}
+
+/// Handle /api/agents/stats - return agent statistics
+async fn handle_agent_stats(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let agent_id = extract_query_param(query, "agent_id").unwrap_or("")
+  
+  let json = if agent_id.length() > 0 {
+    // Return stats for specific agent
+    match ctx.stats_manager.get_stats(agent_id) {
+      Some(s) => "{\"agent_id\":\"" + json_escape(s.agent_id) +
+        "\",\"total_conversations\":" + s.total_conversations.to_string() +
+        ",\"total_input_chars\":" + s.total_input_chars.to_string() +
+        ",\"total_output_chars\":" + s.total_output_chars.to_string() +
+        ",\"total_prompt_tokens\":" + s.total_prompt_tokens.to_string() +
+        ",\"total_completion_tokens\":" + s.total_completion_tokens.to_string() +
+        ",\"last_active_at\":\"" + json_escape(s.last_active_at) + "\"}"
+      None => "{\"error\":\"Agent not found: " + json_escape(agent_id) + "\"}"
+    }
+  } else {
+    // Return all stats
+    let all_stats = ctx.stats_manager.get_all_stats()
+    let json_parts = all_stats.map(fn(s) {
+      "{\"agent_id\":\"" + json_escape(s.agent_id) +
+        "\",\"total_conversations\":" + s.total_conversations.to_string() +
+        ",\"total_input_chars\":" + s.total_input_chars.to_string() +
+        ",\"total_output_chars\":" + s.total_output_chars.to_string() +
+        ",\"total_prompt_tokens\":" + s.total_prompt_tokens.to_string() +
+        ",\"total_completion_tokens\":" + s.total_completion_tokens.to_string() +
+        ",\"last_active_at\":\"" + json_escape(s.last_active_at) + "\"}"
+    })
+    "[" + json_parts.join(",") + "]"
+  }
   
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": "application/json; charset=utf-8",
@@ -321,9 +385,12 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   
   // Store user message in conversation history
   ctx.agent_manager.add_message(agent_id, "user", message)
+  let input_chars = message.length()
   
   // Stream from DeepSeek API and forward chunks to client
   let mut full_response = ""
+  let mut prompt_tokens = 0
+  let mut completion_tokens = 0
   try {
     let client = @http.post_stream(url, headers=req_headers)
     defer client.close()
@@ -349,8 +416,24 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
           if payload == "[DONE]" {
             // Store assistant response in conversation history
             ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+            // Record stats with token usage if available
+            let output_chars = full_response.length()
+            ctx.stats_manager.record_conversation(
+              agent_id, input_chars, output_chars,
+              prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            )
             conn.write_string("data: [DONE]\n\n")
           } else {
+            // Check for usage info in the payload
+            if string_find(payload, "\"usage\"") is Some(_) {
+              match extract_usage_tokens(payload) {
+                Some((pt, ct)) => {
+                  prompt_tokens = pt
+                  completion_tokens = ct
+                }
+                None => ()
+              }
+            }
             match extract_content(payload) {
               Some(content) => {
                 full_response = full_response + content
@@ -670,6 +753,49 @@ fn json_escape(s : String) -> String {
     i = i + 1
   }
   result
+}
+
+/// Extract token usage from DeepSeek response JSON
+/// Returns (prompt_tokens, completion_tokens) or None
+fn extract_usage_tokens(json_str : String) -> Option[(Int, Int)] {
+  // Find "prompt_tokens": XX
+  let pt_prefix = "\"prompt_tokens\":"
+  let ct_prefix = "\"completion_tokens\":"
+  
+  let pt_start = match string_find(json_str, pt_prefix) {
+    Some(s) => s + pt_prefix.length()
+    None => return None
+  }
+  let ct_start = match string_find(json_str, ct_prefix) {
+    Some(s) => s + ct_prefix.length()
+    None => return None
+  }
+  
+  let prompt_tokens = parse_int_at(json_str, pt_start)
+  let completion_tokens = parse_int_at(json_str, ct_start)
+  
+  Some((prompt_tokens, completion_tokens))
+}
+
+/// Parse an integer starting at a given position in a string
+fn parse_int_at(s : String, start : Int) -> Int {
+  let mut result = 0
+  let mut i = start
+  // Skip whitespace
+  while i < s.length() && s[i] == ' ' { i = i + 1 }
+  // Skip leading digits
+  let mut neg = false
+  if i < s.length() && s[i] == '-' { neg = true; i = i + 1 }
+  while i < s.length() {
+    let c = s[i]
+    if c >= '0' && c <= '9' {
+      result = result * 10 + (c.to_int() - 48)
+      i = i + 1
+    } else {
+      break
+    }
+  }
+  if neg { -result } else { result }
 }
 
 /// Simple JSON content extraction from DeepSeek response (handles JSON escapes)
