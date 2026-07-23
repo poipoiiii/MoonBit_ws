@@ -2,6 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ══════════════════════════════
+   Light / Dark Theme Variables
+   ══════════════════════════════ */
+:root,
+[data-theme="dark"] {
+  --bg-deep: #0a0a0a;
+  --bg-panel: #0d0d0d;
+  --bg-elevated: #1a1a1a;
+  --bg-hover: rgba(31, 31, 31, 0.3);
+  --bg-selected: rgba(31, 31, 31, 0.6);
+  --bg-input: #0a0a0a;
+  --bg-kbd: #111111;
+
+  --border-subtle: #1f1f1f;
+  --border-muted: #333333;
+
+  --text-primary: #d1d5db;
+  --text-heading: #e5e7eb;
+  --text-muted: #9ca3af;
+  --text-dim: #6b7280;
+  --text-dimmer: #4b5563;
+  --text-placeholder: #374151;
+
+  --text-gray-muted: #9ca3af;
+  --text-gray-dim: #6b7280;
+
+  --scrollbar-thumb: #1f1f1f;
+
+  --log-sys: rgba(168, 85, 247, 0.7);
+  --log-user: #60a5fa;
+  --log-agent: #d1d5db;
+
+  --stop-btn-bg: rgba(127, 29, 29, 0.3);
+  --stop-btn-hover: rgba(127, 29, 29, 0.5);
+  --run-btn-bg: rgba(6, 78, 59, 0.3);
+  --run-btn-hover: rgba(6, 78, 59, 0.5);
+  --config-hover: #1f1f1f;
+
+  --cursor-color: #9ca3af;
+}
+
+[data-theme="light"] {
+  --bg-deep: #f3f4f6;
+  --bg-panel: #ffffff;
+  --bg-elevated: #f9fafb;
+  --bg-hover: rgba(243, 244, 246, 0.5);
+  --bg-selected: rgba(243, 244, 246, 0.8);
+  --bg-input: #fafafa;
+  --bg-kbd: #e5e7eb;
+
+  --border-subtle: #e5e7eb;
+  --border-muted: #d1d5db;
+
+  --text-primary: #4b5563;
+  --text-heading: #1f2937;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --text-dimmer: #d1d5db;
+  --text-placeholder: #d1d5db;
+
+  --text-gray-muted: #6b7280;
+  --text-gray-dim: #9ca3af;
+
+  --scrollbar-thumb: #d1d5db;
+
+  --log-sys: #9333ea;
+  --log-user: #2563eb;
+  --log-agent: #4b5563;
+
+  --stop-btn-bg: rgba(239, 68, 68, 0.1);
+  --stop-btn-hover: rgba(239, 68, 68, 0.2);
+  --run-btn-bg: rgba(16, 185, 129, 0.1);
+  --run-btn-hover: rgba(16, 185, 129, 0.2);
+  --config-hover: #f3f4f6;
+
+  --cursor-color: #6b7280;
+}
+
 body {
   margin: 0;
   padding: 0;
@@ -9,5 +87,16 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #1f1f1f transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* Theme-aware input placeholder */
+.theme-input::placeholder {
+  color: var(--text-placeholder);
+}
+
+/* Focus ring for interactive elements */
+.theme-focus-ring:focus-visible {
+  outline: 2px solid var(--border-muted);
+  outline-offset: 2px;
 }

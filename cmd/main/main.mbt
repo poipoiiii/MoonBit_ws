@@ -18,6 +18,7 @@ async fn main {
   let port_str = @env.get_env_var("PORT").unwrap_or("8080")
   let port = parse_port(port_str)
   let data_dir = @env.get_env_var("DATA_DIR").unwrap_or("static/data")
+  let cors_origin = @env.get_env_var("CORS_ORIGIN").unwrap_or("*")
   
   // Build data file paths
   let agents_file = data_dir + "/agents.csv"
@@ -58,6 +59,7 @@ async fn main {
     model: model,
     agent_manager: agent_manager,
     tool_registry: tool_registry,
+    cors_origin: cors_origin,
   }
   
   // Start HTTP server
@@ -66,7 +68,8 @@ async fn main {
   @http.Server::new(addr).run_forever(
     async fn(request : @http.Request, _body : &@io.Reader, conn : @http.ServerConnection) {
       handle_request(ctx, request, conn)
-    }
+    },
+    allow_failure=true,
   )
 }
 
@@ -76,6 +79,7 @@ struct RuntimeContext {
   model : String
   agent_manager : @lib.AgentManager
   tool_registry : @lib.ToolRegistry
+  cors_origin : String
 }
 
 /// Route requests to appropriate handlers
@@ -123,7 +127,7 @@ async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection)
   
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   conn.write_string(json)
 }
@@ -138,7 +142,7 @@ async fn handle_tools_json(ctx : RuntimeContext, conn : @http.ServerConnection) 
   
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   conn.write_string(json)
 }
@@ -168,7 +172,7 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   
   // Build messages
