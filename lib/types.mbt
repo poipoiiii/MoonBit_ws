@@ -10,6 +10,7 @@ pub struct Agent {
   system_prompt : String
   max_tokens : Int
   temperature : Float
+  tool_ids : String
 }
 
 /// Task status enum

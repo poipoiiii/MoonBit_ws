@@ -1,6 +1,6 @@
-id,name,model,instruction,system_prompt,max_tokens,temperature
-agent_001,CodeAssistant,gpt-4,"你是一个代码助手，帮助用户编写和调试MoonBit代码","你是一个专业的MoonBit语言助手",4096,0.3
-agent_002,DataAnalyzer,gpt-4,"你是一个数据分析师，负责处理CSV数据","你是一个数据分析专家",8192,0.5
-agent_003,TaskPlanner,gpt-4,"你是一个任务规划器，拆解复杂任务为子任务","你是一个任务规划专家",2048,0.7
-agent_004,MemoryKeeper,gpt-4,"负责管理Agent的短期和长期记忆","你是一个记忆管理专家",4096,0.4
-agent_005,ToolCaller,gpt-4,"负责调度和执行外部工具调用","你是一个工具调度专家",2048,0.2
+id,name,model,instruction,system_prompt,max_tokens,temperature,tool_ids
+agent_001,CodeAssistant,gpt-4,"你是一个代码助手，帮助用户编写和调试MoonBit代码","你是一个专业的MoonBit语言助手",4096,0.3,"tool_002,tool_003,tool_007"
+agent_002,DataAnalyzer,gpt-4,"你是一个数据分析师，负责处理CSV数据","你是一个数据分析专家",8192,0.5,"tool_002,tool_005,tool_007"
+agent_003,TaskPlanner,gpt-4,"你是一个任务规划器，拆解复杂任务为子任务","你是一个任务规划专家",2048,0.7,"tool_001,tool_006"
+agent_004,MemoryKeeper,gpt-4,"负责管理Agent的短期和长期记忆","你是一个记忆管理专家",4096,0.4,""
+agent_005,ToolCaller,gpt-4,"负责调度和执行外部工具调用","你是一个工具调度专家",2048,0.2,"tool_001,tool_002,tool_003,tool_004,tool_005,tool_006,tool_007"

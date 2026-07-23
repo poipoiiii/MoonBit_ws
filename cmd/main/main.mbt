@@ -148,7 +148,7 @@ async fn handle_index(conn : @http.ServerConnection) -> Unit {
 async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection) -> Unit {
   let agents = ctx.agent_manager.list_all()
   let json_parts = agents.map(fn(a) {
-    "{\"id\":\"" + a.id + "\",\"name\":\"" + a.name + "\",\"model\":\"" + a.model + "\",\"max_tokens\":" + a.max_tokens.to_string() + "}"
+    "{\"id\":\"" + json_escape(a.id) + "\",\"name\":\"" + json_escape(a.name) + "\",\"model\":\"" + json_escape(a.model) + "\",\"max_tokens\":" + a.max_tokens.to_string() + ",\"tool_ids\":\"" + json_escape(a.tool_ids) + "\"}"
   })
   let json = "[" + json_parts.join(",") + "]"
   
@@ -198,7 +198,7 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   }
   
   // Build messages for DeepSeek API with stream=true
-  let messages = agent.build_prompt(message)
+  let messages = agent.build_prompt(message, ctx.tool_registry)
   let msgs = messages.map(fn(msg) {
     "{\"role\":\"" + json_escape(msg.role) + "\",\"content\":\"" + json_escape(msg.content) + "\"}"
   })

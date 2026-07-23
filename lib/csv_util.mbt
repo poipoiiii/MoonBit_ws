@@ -110,6 +110,7 @@ fn parse_float(s : String) -> Float {
 }
 
 /// Load agents from CSV file
+/// Expected columns: id,name,model,instruction,system_prompt,max_tokens,temperature,tool_ids
 async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
   let rows_result = read_csv(file_path)
   let rows = match rows_result {
@@ -119,7 +120,7 @@ async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
   
   let agents : Map[String, Agent] = Map([], capacity=rows.length())
   for row in rows {
-    if row.length() >= 7 {
+    if row.length() >= 8 {
       let agent = Agent::{
         id: row[0],
         name: row[1],
@@ -128,6 +129,20 @@ async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
         system_prompt: row[4],
         max_tokens: parse_int(row[5]),
         temperature: parse_float(row[6]),
+        tool_ids: row[7],
+      }
+      agents[agent.id] = agent
+    } else if row.length() >= 7 {
+      // Backward compat: no tool_ids column
+      let agent = Agent::{
+        id: row[0],
+        name: row[1],
+        model: row[2],
+        instruction: row[3],
+        system_prompt: row[4],
+        max_tokens: parse_int(row[5]),
+        temperature: parse_float(row[6]),
+        tool_ids: "",
       }
       agents[agent.id] = agent
     }
