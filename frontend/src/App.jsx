@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Zap, MemoryStick, Cpu, Settings, Square, Play,
   Terminal, Send, CircleDot, Loader2, WifiOff,
-  Sun, Moon
+  Sun, Moon, X, Info
 } from 'lucide-react'
 import { fetchAgents, fetchTools, createChatStream } from './api'
 import { useTheme } from './ThemeContext'
@@ -18,9 +18,18 @@ function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [connecting, setConnecting] = useState(true)
   const [agentStatuses, setAgentStatuses] = useState({})
+  const [showConfig, setShowConfig] = useState(false)
+  const [showExamples, setShowExamples] = useState(true)
   const logEndRef = useRef(null)
   const inputRef = useRef(null)
   const abortRef = useRef(null)
+
+  const examplePrompts = [
+    '你好，请介绍一下你自己',
+    '帮我计算 256 * 48 等于多少',
+    '读取当前目录下的 agents.csv 文件',
+    '有哪些工具可以使用？',
+  ]
 
   // Load data from backend on mount
   useEffect(() => {
@@ -322,6 +331,7 @@ function App() {
               {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
             </button>
             <button
+              onClick={() => setShowConfig(true)}
               disabled={connecting || !selectedAgent}
               className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200"
               style={{
@@ -468,8 +478,127 @@ function App() {
               </button>
             </div>
           </div>
+          {/* Example prompts */}
+          {!isStreaming && !connecting && selectedAgent && showExamples && logs.length <= 2 && (
+            <div className="mt-3 px-2">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>
+                  你可以这样问我:
+                </span>
+                <button
+                  onClick={() => setShowExamples(false)}
+                  className="text-[10px] px-1.5 py-0.5 rounded transition-colors"
+                  style={{ color: 'var(--text-dimmer)' }}
+                  onMouseEnter={e => e.currentTarget.style.color = 'var(--text-muted)'}
+                  onMouseLeave={e => e.currentTarget.style.color = 'var(--text-dimmer)'}
+                >
+                  Hide
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {examplePrompts.map((prompt, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setInput(prompt)
+                      inputRef.current?.focus()
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-lg transition-all duration-200 border"
+                    style={{
+                      color: 'var(--text-muted)',
+                      borderColor: 'var(--border-subtle)',
+                      backgroundColor: 'var(--bg-elevated)',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.borderColor = 'var(--border-muted)'
+                      e.currentTarget.style.color = 'var(--text-heading)'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.borderColor = 'var(--border-subtle)'
+                      e.currentTarget.style.color = 'var(--text-muted)'
+                    }}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
+      {/* </div> */}
+
+      {/* ===== Config Modal ===== */}
+      {showConfig && selectedAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="rounded-xl w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto" style={{
+            backgroundColor: 'var(--bg-panel)',
+            border: '1px solid var(--border-subtle)',
+          }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+              <h3 className="font-semibold text-sm flex items-center gap-2" style={{ color: 'var(--text-heading)' }}>
+                <Settings className="w-4 h-4" /> Agent Configuration
+              </h3>
+              <button onClick={() => setShowConfig(false)} className="p-1 rounded-lg transition-colors" style={{ color: 'var(--text-dim)' }}
+                onMouseEnter={e => e.currentTarget.style.color = 'var(--text-heading)'}
+                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-dim)'}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4 text-sm">
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Agent ID</label>
+                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.id}</p>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Name</label>
+                <p className="mt-1" style={{ color: 'var(--text-heading)' }}>{selectedAgent.name}</p>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Model</label>
+                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.model}</p>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>System Prompt</label>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{selectedAgent.system_prompt}</p>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Max Tokens</label>
+                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.max_tokens}</p>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Temperature</label>
+                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.temperature}</p>
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Bound Tools ({tools.filter(t => selectedAgent.tool_ids?.includes(t.id)).length})</label>
+                <div className="mt-1 space-y-1">
+                  {tools.filter(t => selectedAgent.tool_ids?.includes(t.id)).map(tool => (
+                    <div key={tool.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                      <Info className="w-3 h-3 shrink-0" style={{ color: 'var(--text-dim)' }} />
+                      <span className="text-xs font-mono" style={{ color: 'var(--text-heading)' }}>{tool.name}</span>
+                      <span className="text-[10px]" style={{ color: 'var(--text-dim)' }}>- {tool.description}</span>
+                    </div>
+                  ))}
+                  {!selectedAgent.tool_ids && (
+                    <p className="text-xs" style={{ color: 'var(--text-dimmer)' }}>No tools bound</p>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="border-t px-5 py-3 flex justify-end" style={{ borderColor: 'var(--border-subtle)' }}>
+              <button onClick={() => setShowConfig(false)} className="text-xs px-4 py-2 rounded-lg transition-colors" style={{
+                backgroundColor: 'var(--bg-elevated)',
+                color: 'var(--text-heading)',
+              }}
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
+              >Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
