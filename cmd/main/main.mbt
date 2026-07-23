@@ -82,6 +82,16 @@ struct RuntimeContext {
   cors_origin : String
 }
 
+/// Build CORS headers for cross-origin requests
+fn cors_headers(origin : String) -> Map[String, String] {
+  Map([
+    ("Access-Control-Allow-Origin", origin),
+    ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+    ("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept"),
+    ("Access-Control-Max-Age", "86400"),
+  ])
+}
+
 /// Route requests to appropriate handlers
 async fn handle_request(
   ctx : RuntimeContext,
@@ -91,7 +101,18 @@ async fn handle_request(
   let path = request.path
   let meth = request.meth
   
-  // Simple routing
+  // Handle CORS preflight
+  if meth is Options {
+    conn.send_response(204, "No Content", extra_headers={
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept",
+      "Access-Control-Max-Age": "86400",
+    })
+    return
+  }
+  
+  // Handle GET routes
   if meth is Get {
     if path == "/" || path == "" {
       handle_index(conn)
@@ -102,11 +123,17 @@ async fn handle_request(
     } else if path.starts_with("/api/chat") {
       handle_chat_sse(ctx, path, conn)
     } else {
-      conn.send_response(404, "Not Found", extra_headers={ "Content-Type": "text/plain" })
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
       conn.write_string("404 Not Found")
     }
   } else {
-    conn.send_response(405, "Method Not Allowed", extra_headers={ "Content-Type": "text/plain" })
+    conn.send_response(405, "Method Not Allowed", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
     conn.write_string("405 Method Not Allowed")
   }
 }
@@ -151,7 +178,7 @@ async fn handle_tools_json(ctx : RuntimeContext, conn : @http.ServerConnection) 
 async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
   // Parse query parameters from path
   let query = match string_find(path, "?") {
-    Some(pos) => path.substring(start=pos+1, end=path.length())
+    Some(pos) => path[pos+1:].to_string()
     None => ""
   }
   let agent_id = extract_query_param(query, "agent_id").unwrap_or("agent_001")
@@ -161,13 +188,58 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   let agent = match ctx.agent_manager.find(agent_id) {
     Some(a) => a
     None => {
-      conn.send_response(404, "Not Found", extra_headers={ "Content-Type": "text/plain" })
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
       conn.write_string("Agent not found: " + agent_id)
       return
     }
   }
   
-  // Set SSE headers and send response
+  // Build messages for DeepSeek API
+  let messages = agent.build_prompt(message)
+  let msgs = messages.map(fn(msg) {
+    "{\"role\":\"" + json_escape(msg.role) + "\",\"content\":\"" + json_escape(msg.content) + "\"}"
+  })
+  let msg_json = "[" + msgs.join(",") + "]"
+  let body_str = "{\"model\":\"" + json_escape(ctx.model) + "\",\"messages\":" + msg_json +
+    ",\"max_tokens\":" + agent.max_tokens.to_string() + ",\"temperature\":" + agent.temperature.to_string() + "}"
+  
+  let url = "https://api.deepseek.com/v1/chat/completions"
+  let req_headers = Map([
+    ("Content-Type", "application/json"),
+    ("Authorization", "Bearer " + ctx.api_key),
+  ])
+  
+  // Call DeepSeek API first (before sending SSE headers)
+  let (code, text) = try {
+    let (resp, body) = @http.post(url, body_str, headers=req_headers)
+    let txt = body.text() catch { _ => "Error: Invalid UTF-8" }
+    (resp.code, txt)
+  } catch {
+    _ => {
+      // DeepSeek API unreachable - send error response (not SSE)
+      conn.send_response(502, "Bad Gateway", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Chat API error: Failed to connect to DeepSeek")
+      return
+    }
+  }
+  
+  // Check API response status
+  if code != 200 {
+    conn.send_response(code, "API Error", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Chat API error: DeepSeek returned " + code.to_string())
+    return
+  }
+  
+  // API call succeeded - send SSE response headers
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -175,39 +247,18 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   
-  // Build messages
-  let messages = agent.build_prompt(message)
-  
-  // Call DeepSeek API via @http.post
-  let msgs = messages.map(fn(msg) {
-    "{\"role\":\"" + msg.role + "\",\"content\":\"" + msg.content + "\"}"
-  })
-  let msg_json = "[" + msgs.join(",") + "]"
-  let body_str = "{\"model\":\"" + ctx.model + "\",\"messages\":" + msg_json +
-    ",\"max_tokens\":" + agent.max_tokens.to_string() + ",\"temperature\":" + agent.temperature.to_string() + "}"
-  
-  let url = "https://api.deepseek.com/v1/chat/completions"
-  let headers = Map([("Content-Type", "application/json"), ("Authorization", "Bearer " + ctx.api_key)])
-  
-  // Make HTTP POST request - String implements Data trait
-  let (response, data) = @http.post(url, body_str, headers=headers)
-  
-  if response.code == 200 {
-    let text = data.text() catch { _ => "Error: Invalid UTF-8" }
-    let content = extract_content(text)
-    match content {
-      Some(c) => {
-        conn.write_string("data: " + c + "\n\n")
-      }
-      None => {
-        conn.write_string("data: Error: Failed to parse response\n\n")
-      }
+  // Parse and stream the response content
+  let content = extract_content(text)
+  match content {
+    Some(c) => {
+      conn.write_string("data: " + c + "\n\n")
     }
-  } else {
-    conn.write_string("data: Error: API error " + response.code.to_string() + "\n\n")
+    None => {
+      conn.write_string("data: Error: Failed to parse response\n\n")
+    }
   }
-  
-  conn.close()
+  // Note: Don't call conn.close() - the server will call end_response()
+  // to properly flush and terminate the chunked response
 }
 
 /// Simple string search for a substring
@@ -294,6 +345,36 @@ fn decode_url(s : String) -> String {
         None => ()
       }
       i = i + 2
+    } else {
+      match ch.to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
+    }
+    i = i + 1
+  }
+  result
+}
+
+/// Escape string for JSON (handle quotes, backslash, and control characters)
+fn json_escape(s : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < s.length() {
+    let ch = s[i]
+    if ch == 34 { // "
+      result = result + "\\\""
+    } else if ch == 92 { // \
+      result = result + "\\\\"
+    } else if ch == 10 { // \n
+      result = result + "\\n"
+    } else if ch == 13 { // \r
+      result = result + "\\r"
+    } else if ch == 9 { // \t
+      result = result + "\\t"
+    } else if ch < 32 {
+      // Skip other control chars
+      result = result
     } else {
       match ch.to_char() {
         Some(c) => result = result + c.to_string()

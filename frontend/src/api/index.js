@@ -1,4 +1,6 @@
-const API_BASE = '/api'
+// 开发环境通过 Vite proxy 代理 /api
+// 生产环境需配置 VITE_API_BASE 指向后端地址（如 http://your-host:8080）
+const API_BASE = import.meta.env.VITE_API_BASE || '/api'
 
 /**
  * 获取所有 Agent 列表
