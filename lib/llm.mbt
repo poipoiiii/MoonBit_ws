@@ -37,7 +37,10 @@ fn extract_content(json_str : String) -> Option[String] {
         } else if ch == '"' {
           break
         } else {
-          result = result + ch.to_string()
+          match ch.to_char() {
+            Some(c) => result = result + c.to_string()
+            None => ()
+          }
           i = i + 1
         }
       }

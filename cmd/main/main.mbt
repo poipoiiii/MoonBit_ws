@@ -284,10 +284,17 @@ fn decode_url(s : String) -> String {
       // '%'
       let hi = hex_to_int(s[i + 1])
       let lo = hex_to_int(s[i + 2])
-      result = result + (hi * 16 + lo).to_char().to_string()
+      let code = hi * 16 + lo
+      match code.to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
       i = i + 2
     } else {
-      result = result + ch.to_char().to_string()
+      match ch.to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
     }
     i = i + 1
   }
@@ -312,7 +319,10 @@ fn extract_content(json_str : String) -> Option[String] {
         } else if ch == '"' {
           break
         } else {
-          result = result + ch.to_string()
+          match ch.to_char() {
+            Some(c) => result = result + c.to_string()
+            None => ()
+          }
           i = i + 1
         }
       }

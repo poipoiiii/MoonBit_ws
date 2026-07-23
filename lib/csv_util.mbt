@@ -53,7 +53,10 @@ fn parse_csv_line(line : String) -> Array[String] {
       fields.push(current.trim().to_owned())
       current = ""
     } else {
-      current = current + ch.to_string()
+      match ch.to_char() {
+        Some(c) => current = current + c.to_string()
+        None => ()
+      }
     }
     i = i + 1
   }
