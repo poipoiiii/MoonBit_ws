@@ -8,3 +8,6 @@ run_debug.*
 # Environment files - may contain API keys and secrets
 .env
 .env.*
+
+# Misc development scripts and private documents
+__misc/
