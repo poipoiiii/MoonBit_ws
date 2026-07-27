@@ -2,12 +2,62 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Zap, MemoryStick, Cpu, Settings, Square, Play,
   Terminal, Send, CircleDot, Loader2, WifiOff,
-  Sun, Moon, X, Info
+  Sun, Moon, X, Info, Bot
 } from 'lucide-react'
 import { fetchAgents, fetchTools, createChatStream } from './api'
 import { useTheme } from './ThemeContext'
 import MarkdownMessage from './components/MarkdownMessage'
 
+/* ─────────────────────────────────────────────
+   Status → Tailwind color class
+   ───────────────────────────────────────────── */
+const statusColor = (status) => {
+  switch (status) {
+    case 'running': return 'text-emerald-400'
+    case 'idle': return 'text-amber-400'
+    case 'stopped': return 'text-rose-400'
+    default: return 'text-gray-400'
+  }
+}
+
+/* ─────────────────────────────────────────────
+   Agent status badge in sidebar
+   ───────────────────────────────────────────── */
+function StatusDot({ status }) {
+  const isRunning = status === 'running'
+  return (
+    <CircleDot
+      className={`w-3 h-3 shrink-0 ${statusColor(status)} ${isRunning ? 'animate-pulse-dot' : ''}`}
+    />
+  )
+}
+
+/* ─────────────────────────────────────────────
+   Toolbar button (icon + text, theme-aware)
+   ───────────────────────────────────────────── */
+function ToolbarBtn({ children, active, color, activeBg, disabled, onClick }) {
+  const activeStyle = active
+    ? { color, backgroundColor: activeBg }
+    : { color: 'var(--text-muted)', backgroundColor: 'transparent' }
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200
+        ${!active && !disabled ? 'hover-bg hover-text' : ''}
+        ${disabled ? 'opacity-30 cursor-not-allowed' : ''}
+      `}
+      style={activeStyle}
+    >
+      {children}
+    </button>
+  )
+}
+
+/* ==============================================
+   Main App
+   ============================================== */
 function App() {
   const { theme, toggleTheme } = useTheme()
   const [agents, setAgents] = useState([])
@@ -31,7 +81,7 @@ function App() {
     '有哪些工具可以使用？',
   ]
 
-  // Load data from backend on mount
+  /* ── Load backend data ── */
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -73,25 +123,17 @@ function App() {
     return () => { cancelled = true }
   }, [])
 
-  // Auto-scroll log
+  /* ── Auto-scroll ── */
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
 
-  // Focus input after streaming completes
+  /* ── Focus input after streaming ── */
   useEffect(() => {
     if (!isStreaming) inputRef.current?.focus()
   }, [isStreaming])
 
-  const statusColor = (status) => {
-    switch (status) {
-      case 'running': return 'text-emerald-400'
-      case 'idle': return 'text-amber-400'
-      case 'stopped': return 'text-rose-400'
-      default: return 'text-gray-400'
-    }
-  }
-
+  /* ── Send message ── */
   const handleSend = useCallback(() => {
     if (!input.trim() || !selectedAgent || isStreaming) return
     const userMsg = input.trim()
@@ -149,45 +191,72 @@ function App() {
     }
   }
 
-  const handleRunAgent = () => {
-    if (!selectedAgent) return
-    updateAgentStatus(selectedAgent.id, 'running')
-  }
-
+  const handleRunAgent = () => selectedAgent && updateAgentStatus(selectedAgent.id, 'running')
   const handleStopAgent = () => {
     if (!selectedAgent) return
-    if (abortRef.current) {
-      abortRef.current.abort()
-      abortRef.current = null
-    }
+    if (abortRef.current) { abortRef.current.abort(); abortRef.current = null }
     setIsStreaming(false)
     updateAgentStatus(selectedAgent.id, 'stopped')
   }
 
   const currentStatus = selectedAgent ? (agentStatuses[selectedAgent.id] || 'idle') : 'idle'
 
+  /* ── Log entry component ── */
+  const renderLog = (log, index) => {
+    const isLast = index === logs.length - 1
+    const showCursor = log.id && isStreaming && isLast
+
+    const typeClass =
+      log.type === 'sys' ? 'log-entry-sys' :
+      log.type === 'user' ? 'log-entry-user' :
+      'log-entry-agent'
+
+    return (
+      <div key={index} className={`log-entry ${typeClass}`} style={{
+        color: log.type === 'sys' ? 'var(--log-sys)' :
+               log.type === 'user' ? 'var(--log-user)' :
+               'var(--log-agent)'
+      }}>
+        {log.type === 'agent' ? (
+          <MarkdownMessage text={log.text} isStreaming={showCursor} />
+        ) : (
+          <>
+            <span className="whitespace-pre-wrap leading-relaxed">{log.text}</span>
+            {showCursor && (
+              <span className="inline-block w-2 h-4 ml-0.5 animate-pulse" style={{ backgroundColor: 'var(--cursor-color)' }} />
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="h-screen flex overflow-hidden" style={{
       backgroundColor: 'var(--bg-deep)',
       color: 'var(--text-primary)'
     }}>
-      {/* ===== 左侧栏 ===== */}
-      <aside className="w-64 border-r flex flex-col shrink-0" style={{
+      {/* ========================================
+          Sidebar
+      ======================================== */}
+      <aside className="w-64 border-r flex flex-col shrink-0 relative" style={{
         backgroundColor: 'var(--bg-panel)',
         borderColor: 'var(--border-subtle)'
       }}>
+        <div className="sidebar-gradient absolute inset-0" />
+
         {/* Logo */}
-        <div className="h-14 border-b flex items-center gap-2.5 px-5" style={{
-          borderColor: 'var(--border-subtle)'
-        }}>
-          <Zap className="w-5 h-5 text-emerald-400" />
+        <div className="h-14 border-b flex items-center gap-2.5 px-5 relative z-10" style={{ borderColor: 'var(--border-subtle)' }}>
+          <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+            <Zap className="w-4 h-4 text-emerald-400" />
+          </div>
           <span className="font-semibold text-sm tracking-wide" style={{ color: 'var(--text-heading)' }}>
             MoonBit Runtime
           </span>
         </div>
 
-        {/* Agent 列表 */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+        {/* Agent List */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-1 relative z-10">
           <div className="text-[10px] uppercase tracking-widest px-2 mb-2 font-semibold" style={{ color: 'var(--text-dim)' }}>
             {connecting ? (
               <span className="flex items-center gap-1.5">
@@ -197,57 +266,41 @@ function App() {
               `Agents (${agents.length})`
             )}
           </div>
-          {agents.map(agent => (
-            <button
-              key={agent.id}
-              onClick={() => setSelectedAgent(agent)}
-              className={`w-full text-left px-3 py-2.5 rounded-lg transition-all duration-200 group border ${
-                selectedAgent?.id === agent.id
-                  ? 'border'
-                  : 'border-transparent hover:'
-              }`}
-              style={{
-                backgroundColor: selectedAgent?.id === agent.id
-                  ? 'var(--bg-selected)'
-                  : 'transparent',
-                borderColor: selectedAgent?.id === agent.id
-                  ? 'var(--border-muted)'
-                  : 'transparent',
-              }}
-              onMouseEnter={e => {
-                if (selectedAgent?.id !== agent.id)
-                  e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
-              }}
-              onMouseLeave={e => {
-                if (selectedAgent?.id !== agent.id)
-                  e.currentTarget.style.backgroundColor = 'transparent'
-              }}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <CircleDot className={`w-3 h-3 shrink-0 ${statusColor(agentStatuses[agent.id] || 'idle')}`} />
-                  <span className="text-sm font-mono truncate" style={{ color: 'var(--text-heading)' }}>
-                    {agent.name}
+
+          {agents.map(agent => {
+            const isSelected = selectedAgent?.id === agent.id
+            return (
+              <button
+                key={agent.id}
+                onClick={() => setSelectedAgent(agent)}
+                className={`w-full text-left px-3 py-2.5 rounded-lg group border agent-item ${isSelected ? 'selected' : 'border-transparent'}`}
+                style={{ borderColor: isSelected ? 'var(--border-muted)' : 'transparent' }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <StatusDot status={agentStatuses[agent.id] || 'idle'} />
+                    <span className="text-sm font-mono truncate" style={{ color: 'var(--text-heading)' }}>
+                      {agent.name}
+                    </span>
+                  </div>
+                  <span className="text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--text-dim)' }}>
+                    {agent.model}
                   </span>
                 </div>
-                <span className="text-[10px] shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--text-dim)' }}>
-                  {agent.model}
-                </span>
-              </div>
-            </button>
-          ))}
+              </button>
+            )
+          })}
+
           {!connecting && agents.length === 0 && (
-            <div className="text-xs text-center py-4" style={{ color: 'var(--text-dim)' }}>
-              <WifiOff className="w-4 h-4 mx-auto mb-1" />
-              No agents found
+            <div className="flex flex-col items-center py-8 gap-2">
+              <Bot className="w-8 h-8" style={{ color: 'var(--text-dimmer)' }} />
+              <span className="text-xs" style={{ color: 'var(--text-dim)' }}>No agents available</span>
             </div>
           )}
         </div>
 
-        {/* 资源监控 */}
-        <div className="border-t p-4 space-y-3" style={{
-          borderColor: 'var(--border-subtle)'
-        }}>
+        {/* Runtime Monitor */}
+        <div className="border-t p-4 space-y-3 relative z-10" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>
             Runtime
           </div>
@@ -256,10 +309,10 @@ function App() {
               <span className="flex items-center gap-1" style={{ color: 'var(--text-dim)' }}>
                 <MemoryStick className="w-3 h-3" /> Memory
               </span>
-              <span className="font-mono" style={{ color: 'var(--text-muted)' }}>-- MB</span>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>-- MB</span>
             </div>
             <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-              <div className="h-0 w-0 bg-blue-500 rounded-full transition-all duration-700" />
+              <div className="h-0 w-0 bg-blue-500/70 rounded-full transition-all duration-700" />
             </div>
           </div>
           <div>
@@ -267,166 +320,123 @@ function App() {
               <span className="flex items-center gap-1" style={{ color: 'var(--text-dim)' }}>
                 <Cpu className="w-3 h-3" /> CPU
               </span>
-              <span className="font-mono" style={{ color: 'var(--text-muted)' }}>--%</span>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>--%</span>
             </div>
             <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-              <div className="h-0 w-0 bg-purple-500 rounded-full transition-all duration-700" />
+              <div className="h-0 w-0 bg-purple-500/70 rounded-full transition-all duration-700" />
             </div>
           </div>
           {tools.length > 0 && (
-            <div className="pt-1">
-              <div className="text-[10px] font-mono" style={{ color: 'var(--text-dim)' }}>
-                {tools.length} tools registered
+            <div className="pt-1 flex items-center gap-1.5">
+              <div className="flex -space-x-1">
+                {tools.slice(0, 3).map((t, i) => (
+                  <div key={t.id} className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-mono border"
+                    style={{ backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-dim)' }}>
+                    {t.name[0].toUpperCase()}
+                  </div>
+                ))}
               </div>
+              <span className="text-[10px] font-mono" style={{ color: 'var(--text-dim)' }}>
+                {tools.length} tools
+              </span>
             </div>
           )}
         </div>
       </aside>
 
-      {/* ===== 主交互区 ===== */}
+      {/* ========================================
+          Main Area
+      ======================================== */}
       <main className="flex-1 flex flex-col min-w-0">
-        {/* 顶部栏 */}
+        {/* Header */}
         <header className="h-14 border-b flex items-center justify-between px-6 shrink-0" style={{
           backgroundColor: 'var(--bg-panel)',
           borderColor: 'var(--border-subtle)'
         }}>
           <div className="flex items-center gap-4 min-w-0">
-            <div className="flex items-center gap-3">
-              {connecting ? (
-                <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
-              ) : (
-                <>
-                  <h2 className="font-medium font-mono truncate text-sm" style={{ color: 'var(--text-heading)' }}>
-                    {selectedAgent?.name || 'No Agent'}
-                  </h2>
-                  {selectedAgent && (
-                    <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${statusColor(currentStatus)}`}
-                      style={{ backgroundColor: 'var(--bg-elevated)' }}
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                      {currentStatus.toUpperCase()}
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
+            {connecting ? (
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--text-muted)' }} />
+            ) : (
+              <>
+                <h2 className="font-medium font-mono truncate text-sm" style={{ color: 'var(--text-heading)' }}>
+                  {selectedAgent?.name || 'No Agent'}
+                </h2>
+                {selectedAgent && (
+                  <span className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${statusColor(currentStatus)}`}
+                    style={{ backgroundColor: 'var(--bg-elevated)' }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                    {currentStatus.toUpperCase()}
+                  </span>
+                )}
+              </>
+            )}
             {selectedAgent && (
-              <span className="text-[10px] hidden sm:inline font-mono" style={{ color: 'var(--text-dim)' }}>
+              <span className="text-[10px] hidden sm:inline font-mono px-2 py-0.5 rounded" style={{ color: 'var(--text-dim)', backgroundColor: 'var(--bg-elevated)' }}>
                 {selectedAgent.model}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {/* 主题切换按钮 */}
-            <button
-              onClick={toggleTheme}
-              className="text-xs flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all duration-200"
-              style={{
-                color: 'var(--text-muted)',
-              }}
-              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--config-hover)'; e.currentTarget.style.color = 'var(--text-heading)' }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
-              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-            >
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <ToolbarBtn onClick={toggleTheme} active={false}>
               {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-            </button>
-            <button
-              onClick={() => setShowConfig(true)}
-              disabled={connecting || !selectedAgent}
-              className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200"
-              style={{
-                color: 'var(--text-muted)',
-              }}
-              onMouseEnter={e => { if (!e.currentTarget.disabled) { e.currentTarget.style.backgroundColor = 'var(--config-hover)'; e.currentTarget.style.color = 'var(--text-heading)' } }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
-            >
+            </ToolbarBtn>
+            <div className="w-px h-5 mx-0.5" style={{ backgroundColor: 'var(--border-subtle)' }} />
+            <ToolbarBtn onClick={() => setShowConfig(true)} disabled={connecting || !selectedAgent}>
               <Settings className="w-3.5 h-3.5" /> Config
-            </button>
-            <button
+            </ToolbarBtn>
+            <ToolbarBtn
               onClick={handleStopAgent}
               disabled={connecting || !selectedAgent || currentStatus !== 'running'}
-              className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200"
-              style={{
-                color: currentStatus === 'running' ? '#f87171' : 'var(--text-dimmer)',
-                backgroundColor: currentStatus === 'running' ? 'var(--stop-btn-bg)' : 'transparent',
-              }}
-              onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = 'var(--stop-btn-hover)' }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = currentStatus === 'running' ? 'var(--stop-btn-bg)' : 'transparent' }}
+              active={currentStatus === 'running'}
+              color="#f87171"
+              activeBg="var(--stop-btn-bg)"
             >
               <Square className="w-3 h-3" fill="currentColor" /> Stop
-            </button>
-            <button
+            </ToolbarBtn>
+            <ToolbarBtn
               onClick={handleRunAgent}
               disabled={connecting || !selectedAgent || currentStatus === 'running'}
-              className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200"
-              style={{
-                color: currentStatus !== 'running' ? '#34d399' : 'var(--text-dimmer)',
-                backgroundColor: currentStatus !== 'running' ? 'var(--run-btn-bg)' : 'transparent',
-              }}
-              onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.backgroundColor = 'var(--run-btn-hover)' }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = currentStatus !== 'running' ? 'var(--run-btn-bg)' : 'transparent' }}
+              active={currentStatus !== 'running'}
+              color="#34d399"
+              activeBg="var(--run-btn-bg)"
             >
               <Play className="w-3 h-3" fill="currentColor" /> Run
-            </button>
+            </ToolbarBtn>
           </div>
         </header>
 
-        {/* 终端输出区 */}
-        <div className="flex-1 overflow-y-auto p-6 font-mono text-sm" style={{
-          backgroundColor: 'var(--bg-deep)'
-        }}>
+        {/* Terminal Logs */}
+        <div className="flex-1 overflow-y-auto p-6 font-mono text-sm" style={{ backgroundColor: 'var(--bg-deep)' }}>
           {logs.length === 0 && connecting && (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-dimmer)' }}>
-              <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              Connecting to backend...
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--text-dimmer)' }} />
+              <span className="text-xs" style={{ color: 'var(--text-dim)' }}>Connecting to backend...</span>
             </div>
           )}
           {logs.length === 0 && !connecting && (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-dimmer)' }}>
-              Select an agent to get started
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <Terminal className="w-8 h-8" style={{ color: 'var(--text-dimmer)' }} />
+              <span className="text-xs" style={{ color: 'var(--text-dim)' }}>Select an agent to get started</span>
             </div>
           )}
-          {logs.map((log, index) => {
-            const isAgent = log.type === 'agent'
-            return (
-              <div
-                key={index}
-                className={`mb-1${isAgent ? '' : ' leading-relaxed whitespace-pre-wrap'}`}
-                style={{
-                  color: log.type === 'sys' ? 'var(--log-sys)' :
-                         log.type === 'user' ? 'var(--log-user)' :
-                         'var(--log-agent)'
-                }}
-              >
-                {isAgent ? (
-                  <MarkdownMessage
-                    text={log.text}
-                    isStreaming={isStreaming && index === logs.length - 1}
-                  />
-                ) : (
-                  <>
-                    {log.text}
-                    {log.id && isStreaming && index === logs.length - 1 && (
-                      <span className="inline-block w-2 h-4 ml-0.5 animate-pulse" style={{ backgroundColor: 'var(--cursor-color)' }} />
-                    )}
-                  </>
-                )}
-              </div>
-            )
-          })}
+          {logs.map(renderLog)}
           <div ref={logEndRef} />
         </div>
 
-        {/* 底部输入区 */}
+        {/* Input Area */}
         <div className="border-t p-4 shrink-0" style={{
           backgroundColor: 'var(--bg-panel)',
           borderColor: 'var(--border-subtle)'
         }}>
-          <div className="flex items-center gap-3 border rounded-xl px-4 py-3 transition-all duration-300" style={{
+          <div className="flex items-center gap-3 border rounded-xl px-4 py-3 input-wrapper" style={{
             backgroundColor: 'var(--bg-deep)',
             borderColor: 'var(--border-subtle)',
           }}>
-            <Terminal className="w-4 h-4 shrink-0" style={{ color: 'var(--text-dim)' }} />
+            <div className="w-6 h-6 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+              <Terminal className="w-3.5 h-3.5" style={{ color: 'var(--text-dim)' }} />
+            </div>
             <input
               ref={inputRef}
               type="text"
@@ -438,59 +448,47 @@ function App() {
                 connecting ? 'Connecting...' :
                 isStreaming ? 'Waiting for response...' :
                 !selectedAgent ? 'No agent selected' :
-                'Send a prompt or command...'
+                'Type a message and press Enter...'
               }
               className="flex-1 bg-transparent text-sm outline-none font-mono min-w-0 disabled:cursor-not-allowed theme-input"
-              style={{
-                color: 'var(--text-heading)',
-              }}
-              onFocus={e => {
-                const input = e.currentTarget.closest('.rounded-xl')
-                if (input) input.style.borderColor = 'var(--border-muted)'
-              }}
-              onBlur={e => {
-                const input = e.currentTarget.closest('.rounded-xl')
-                if (input) input.style.borderColor = 'var(--border-subtle)'
-              }}
+              style={{ color: 'var(--text-heading)' }}
             />
             <div className="flex items-center gap-2 shrink-0">
               <kbd className="text-[10px] px-1.5 py-0.5 rounded hidden sm:inline" style={{
                 color: 'var(--text-dim)',
                 backgroundColor: 'var(--bg-kbd)',
               }}>
-                ⌘ + ↵
+                Enter
               </kbd>
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || isStreaming || connecting || !selectedAgent}
-                className="transition-colors p-1 disabled:cursor-not-allowed"
+                className="w-7 h-7 rounded-md flex items-center justify-center transition-all duration-200 disabled:cursor-not-allowed"
                 style={{
+                  backgroundColor: (!input.trim() || isStreaming) ? 'transparent' : 'var(--bg-elevated)',
                   color: (!input.trim() || isStreaming) ? 'var(--text-dimmer)' : 'var(--text-muted)',
                 }}
-                onMouseEnter={e => { if (!e.currentTarget.disabled) e.currentTarget.style.color = 'var(--text-heading)' }}
-                onMouseLeave={e => { e.currentTarget.style.color = (!input.trim() || isStreaming) ? 'var(--text-dimmer)' : 'var(--text-muted)' }}
               >
                 {isStreaming ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Send className="w-4 h-4" />
+                  <Send className="w-3.5 h-3.5" />
                 )}
               </button>
             </div>
           </div>
+
           {/* Example prompts */}
           {!isStreaming && !connecting && selectedAgent && showExamples && logs.length <= 2 && (
-            <div className="mt-3 px-2">
+            <div className="mt-3 px-1 animate-fade-in" style={{ animation: 'fade-slide-in 0.3s ease-out' }}>
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>
-                  你可以这样问我:
+                  Try asking
                 </span>
                 <button
                   onClick={() => setShowExamples(false)}
-                  className="text-[10px] px-1.5 py-0.5 rounded transition-colors"
+                  className="text-[10px] px-1.5 py-0.5 rounded hover-text"
                   style={{ color: 'var(--text-dimmer)' }}
-                  onMouseEnter={e => e.currentTarget.style.color = 'var(--text-muted)'}
-                  onMouseLeave={e => e.currentTarget.style.color = 'var(--text-dimmer)'}
                 >
                   Hide
                 </button>
@@ -499,23 +497,12 @@ function App() {
                 {examplePrompts.map((prompt, i) => (
                   <button
                     key={i}
-                    onClick={() => {
-                      setInput(prompt)
-                      inputRef.current?.focus()
-                    }}
-                    className="text-xs px-3 py-1.5 rounded-lg transition-all duration-200 border"
+                    onClick={() => { setInput(prompt); inputRef.current?.focus() }}
+                    className="text-xs px-3 py-1.5 rounded-lg transition-all duration-200 border hover-bg hover-text"
                     style={{
                       color: 'var(--text-muted)',
                       borderColor: 'var(--border-subtle)',
                       backgroundColor: 'var(--bg-elevated)',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.borderColor = 'var(--border-muted)'
-                      e.currentTarget.style.color = 'var(--text-heading)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.borderColor = 'var(--border-subtle)'
-                      e.currentTarget.style.color = 'var(--text-muted)'
                     }}
                   >
                     {prompt}
@@ -526,79 +513,89 @@ function App() {
           )}
         </div>
       </main>
-      {/* </div> */}
 
-      {/* ===== Config Modal ===== */}
+      {/* ========================================
+          Config Modal
+      ======================================== */}
       {showConfig && selectedAgent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="rounded-xl w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto" style={{
+        <div className="fixed inset-0 z-50 flex items-center justify-center animate-modal" style={{ backgroundColor: 'var(--overlay-bg)' }}>
+          <div className="rounded-xl w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto animate-modal" style={{
             backgroundColor: 'var(--bg-panel)',
             border: '1px solid var(--border-subtle)',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
           }}>
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
               <h3 className="font-semibold text-sm flex items-center gap-2" style={{ color: 'var(--text-heading)' }}>
                 <Settings className="w-4 h-4" /> Agent Configuration
               </h3>
-              <button onClick={() => setShowConfig(false)} className="p-1 rounded-lg transition-colors" style={{ color: 'var(--text-dim)' }}
-                onMouseEnter={e => e.currentTarget.style.color = 'var(--text-heading)'}
-                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-dim)'}
+              <button
+                onClick={() => setShowConfig(false)}
+                className="p-1 rounded-lg hover-bg hover-text transition-colors"
+                style={{ color: 'var(--text-dim)' }}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
+
             <div className="p-5 space-y-4 text-sm">
+              <ConfigField label="Agent ID" mono>{selectedAgent.id}</ConfigField>
+              <ConfigField label="Name">{selectedAgent.name}</ConfigField>
+              <ConfigField label="Model" mono>{selectedAgent.model}</ConfigField>
+              <ConfigField label="System Prompt">
+                <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{selectedAgent.system_prompt}</p>
+              </ConfigField>
+              <ConfigField label="Max Tokens" mono>{selectedAgent.max_tokens}</ConfigField>
+              <ConfigField label="Temperature" mono>{selectedAgent.temperature}</ConfigField>
+
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Agent ID</label>
-                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.id}</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Name</label>
-                <p className="mt-1" style={{ color: 'var(--text-heading)' }}>{selectedAgent.name}</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Model</label>
-                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.model}</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>System Prompt</label>
-                <p className="mt-1 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>{selectedAgent.system_prompt}</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Max Tokens</label>
-                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.max_tokens}</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Temperature</label>
-                <p className="mt-1 font-mono" style={{ color: 'var(--text-heading)' }}>{selectedAgent.temperature}</p>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>Bound Tools ({tools.filter(t => selectedAgent.tool_ids?.includes(t.id)).length})</label>
-                <div className="mt-1 space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>
+                  Bound Tools ({tools.filter(t => selectedAgent.tool_ids?.includes(t.id)).length})
+                </label>
+                <div className="mt-1.5 space-y-1">
                   {tools.filter(t => selectedAgent.tool_ids?.includes(t.id)).map(tool => (
-                    <div key={tool.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-                      <Info className="w-3 h-3 shrink-0" style={{ color: 'var(--text-dim)' }} />
-                      <span className="text-xs font-mono" style={{ color: 'var(--text-heading)' }}>{tool.name}</span>
-                      <span className="text-[10px]" style={{ color: 'var(--text-dim)' }}>- {tool.description}</span>
+                    <div key={tool.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                      <div className="w-5 h-5 rounded flex items-center justify-center text-[9px] font-bold" style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-dim)' }}>
+                        {tool.name[0].toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-xs font-mono" style={{ color: 'var(--text-heading)' }}>{tool.name}</span>
+                        <span className="text-[10px] ml-2" style={{ color: 'var(--text-dim)' }}>{tool.description}</span>
+                      </div>
                     </div>
                   ))}
-                  {!selectedAgent.tool_ids && (
-                    <p className="text-xs" style={{ color: 'var(--text-dimmer)' }}>No tools bound</p>
+                  {(!selectedAgent.tool_ids || selectedAgent.tool_ids.length === 0) && (
+                    <p className="text-xs" style={{ color: 'var(--text-dimmer)' }}>No tools bound to this agent</p>
                   )}
                 </div>
               </div>
             </div>
+
             <div className="border-t px-5 py-3 flex justify-end" style={{ borderColor: 'var(--border-subtle)' }}>
-              <button onClick={() => setShowConfig(false)} className="text-xs px-4 py-2 rounded-lg transition-colors" style={{
-                backgroundColor: 'var(--bg-elevated)',
-                color: 'var(--text-heading)',
-              }}
-                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-hover)'}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'}
-              >Close</button>
+              <button
+                onClick={() => setShowConfig(false)}
+                className="text-xs px-4 py-2 rounded-lg transition-colors hover-bg"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-heading)' }}
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/* ── Config field helper ── */
+function ConfigField({ label, mono, children }) {
+  return (
+    <div>
+      <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>
+        {label}
+      </label>
+      <p className={`mt-1 ${mono ? 'font-mono' : ''}`} style={{ color: 'var(--text-heading)' }}>
+        {children}
+      </p>
     </div>
   )
 }

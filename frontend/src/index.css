@@ -25,14 +25,14 @@
   --text-dimmer: #4b5563;
   --text-placeholder: #374151;
 
-  --text-gray-muted: #9ca3af;
-  --text-gray-dim: #6b7280;
-
   --scrollbar-thumb: #1f1f1f;
 
   --log-sys: rgba(168, 85, 247, 0.7);
   --log-user: #60a5fa;
   --log-agent: #d1d5db;
+  --log-agent-bg: rgba(255, 255, 255, 0.02);
+  --log-user-bg: rgba(96, 165, 250, 0.04);
+  --log-sys-bg: rgba(168, 85, 247, 0.04);
 
   --stop-btn-bg: rgba(127, 29, 29, 0.3);
   --stop-btn-hover: rgba(127, 29, 29, 0.5);
@@ -41,6 +41,7 @@
   --config-hover: #1f1f1f;
 
   --cursor-color: #9ca3af;
+  --overlay-bg: rgba(0, 0, 0, 0.6);
 }
 
 [data-theme="light"] {
@@ -62,14 +63,14 @@
   --text-dimmer: #d1d5db;
   --text-placeholder: #d1d5db;
 
-  --text-gray-muted: #6b7280;
-  --text-gray-dim: #9ca3af;
-
   --scrollbar-thumb: #d1d5db;
 
   --log-sys: #9333ea;
   --log-user: #2563eb;
   --log-agent: #4b5563;
+  --log-agent-bg: rgba(0, 0, 0, 0.02);
+  --log-user-bg: rgba(37, 99, 235, 0.04);
+  --log-sys-bg: rgba(147, 51, 234, 0.04);
 
   --stop-btn-bg: rgba(239, 68, 68, 0.1);
   --stop-btn-hover: rgba(239, 68, 68, 0.2);
@@ -78,11 +79,20 @@
   --config-hover: #f3f4f6;
 
   --cursor-color: #6b7280;
+  --overlay-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* ══════════════════════════════
+   Base & Reset
+   ══════════════════════════════ */
+html {
+  transition: background-color 0.3s ease;
 }
 
 body {
   margin: 0;
   padding: 0;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 * {
@@ -90,13 +100,124 @@ body {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-/* Theme-aware input placeholder */
+/* ══════════════════════════════
+   Theme-aware utility classes
+   ══════════════════════════════ */
 .theme-input::placeholder {
   color: var(--text-placeholder);
 }
-
-/* Focus ring for interactive elements */
 .theme-focus-ring:focus-visible {
   outline: 2px solid var(--border-muted);
   outline-offset: 2px;
+}
+
+/* Hover background (works with style={} components) */
+.hover-bg:hover {
+  background-color: var(--bg-hover) !important;
+}
+.hover-text:hover {
+  color: var(--text-heading) !important;
+}
+.border-focus:focus-within {
+  border-color: var(--border-muted) !important;
+}
+
+/* ══════════════════════════════
+   Animations
+   ══════════════════════════════ */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes fade-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-modal {
+  animation: fade-slide-in 0.2s ease-out;
+}
+
+/* ══════════════════════════════
+   Log message styles
+   ══════════════════════════════ */
+.log-entry {
+  position: relative;
+  padding: 4px 0 4px 12px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+.log-entry::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+}
+.log-entry:hover {
+  background-color: var(--bg-hover);
+}
+.log-entry-sys::before {
+  background-color: var(--log-sys);
+}
+.log-entry-user::before {
+  background-color: var(--log-user);
+}
+.log-entry-agent::before {
+  background-color: var(--log-agent);
+  opacity: 0.3;
+}
+
+/* ══════════════════════════════
+   Agent item styles
+   ══════════════════════════════ */
+.agent-item {
+  transition: all 0.2s ease;
+}
+.agent-item:hover {
+  background-color: var(--bg-hover);
+}
+.agent-item.selected {
+  background-color: var(--bg-selected);
+  border-color: var(--border-muted);
+}
+
+/* ══════════════════════════════
+   Input area
+   ══════════════════════════════ */
+.input-wrapper {
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.input-wrapper:focus-within {
+  border-color: var(--border-muted);
+  box-shadow: 0 0 0 1px var(--border-muted);
+}
+
+/* ══════════════════════════════
+   Sidebar decoration
+   ══════════════════════════════ */
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+.sidebar-gradient {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(16, 185, 129, 0.03) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
 }
