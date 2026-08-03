@@ -773,16 +773,8 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     "{\"role\":\"" + json_escape(msg.role) + "\",\"content\":\"" + json_escape(msg.content) + "\"}"
   })
   let msg_json = "[" + msgs.join(",") + "]"
-  let body_str = "{\"model\":\"" + json_escape(ctx.model) + "\",\"messages\":" + msg_json +
-    ",\"max_tokens\":" + agent.max_tokens.to_string() +
-    ",\"temperature\":" + agent.temperature.to_string() +
-    ",\"stream\":true}"
-  
-  let url = "https://api.deepseek.com/v1/chat/completions"
-  let req_headers = Map([
-    ("Content-Type", "application/json"),
-    ("Authorization", "Bearer " + ctx.api_key),
-  ])
+  let tools_json = build_tools_json(agent, ctx.tool_registry)
+  let body_str = build_chat_body(ctx.model, msg_json, tools_json, agent.max_tokens, agent.temperature)
   
   // Send SSE response headers first
   conn.send_response(200, "OK", extra_headers={
@@ -796,10 +788,156 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   ctx.agent_manager.add_message(agent_id, "user", message)
   let input_chars = message.length()
   
-  // Stream from DeepSeek API and forward chunks to client
+  // Round 1: stream the model response (may contain a native function call)
+  let (full_response, tool_name, tool_args, tool_call_id, prompt_tokens, completion_tokens) =
+    stream_completion(ctx, body_str, conn)
+  
+  let mut output_chars = full_response.length()
+  
+  if tool_call_id.length() > 0 {
+    // Native function call detected: notify client and execute the tool
+    conn.write_string("data: **[Tool Call]: " + tool_name + "**\n\n")
+    conn.flush()
+    
+    let tool_result = @lib.execute_tool(tool_name, tool_args, ctx.data_dir)
+    
+    conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
+    conn.flush()
+    
+    // Store the assistant tool-call message in conversation history
+    ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+    
+    // Round 2: feed the tool result back to the model for the final answer
+    let assistant_tool_msg =
+      "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"" +
+      json_escape(tool_call_id) + "\",\"type\":\"function\",\"function\":{\"name\":\"" +
+      json_escape(tool_name) + "\",\"arguments\":\"" + json_escape(tool_args) + "\"}}]}"
+    let tool_msg =
+      "{\"role\":\"tool\",\"tool_call_id\":\"" + json_escape(tool_call_id) +
+      "\",\"content\":\"" + json_escape(tool_result) + "\"}"
+    let follow_json = "[" + msgs.join(",") + "," + assistant_tool_msg + "," + tool_msg + "]"
+    // Keep tools in the follow-up request so the model does not hallucinate
+    // tool-call XML/text instead of producing the final answer
+    let follow_body = build_chat_body(ctx.model, follow_json, tools_json, agent.max_tokens, agent.temperature)
+    
+    let (final_response, _, _, _, _, _) = stream_completion(ctx, follow_body, conn)
+    ctx.agent_manager.add_message(agent_id, "assistant", final_response)
+    output_chars = final_response.length()
+  } else {
+    // No native tool call: fall back to text-based tool call detection
+    match @lib.parse_tool_call(full_response) {
+      Some((tname, args_json)) => {
+        conn.write_string("data: **[Tool Call]: " + tname + "**\n\n")
+        conn.flush()
+        
+        let tool_result = @lib.execute_tool(tname, args_json, ctx.data_dir)
+        
+        conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
+        conn.flush()
+        
+        ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+      }
+      None => {
+        ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+      }
+    }
+  }
+  
+  // Record stats with token usage if available
+  ctx.stats_manager.record_conversation(
+    agent_id, input_chars, output_chars,
+    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+  )
+  conn.write_string("data: [DONE]\n\n")
+}
+
+/// Build the tools array (OpenAI-style function calling) for the agent's assigned tools.
+/// Returns "" when the agent has no tools (tools key is then omitted from the request).
+fn build_tools_json(agent : @lib.Agent, registry : @lib.ToolRegistry) -> String {
+  let tools = agent.get_tools(registry)
+  if tools.length() == 0 {
+    return ""
+  }
+  let tool_jsons = tools.map(fn(t) {
+    "{\"type\":\"function\",\"function\":{\"name\":\"" + json_escape(t.name) +
+      "\",\"description\":\"" + json_escape(t.description) +
+      "\",\"parameters\":{\"type\":\"object\",\"properties\":" + build_properties_schema(t.input_schema) +
+      ",\"required\":[]}}}"
+  })
+  "[" + tool_jsons.join(",") + "]"
+}
+
+/// Convert a simple properties map like {"expression": "string"} into a valid
+/// JSON Schema properties object: {"expression": {"type": "string"}}
+fn build_properties_schema(input_schema : String) -> String {
+  let mut result = "{"
+  let mut first = true
+  let mut i = 0
+  while i < input_schema.length() {
+    if input_schema[i] == 34 { // opening quote of a key
+      let mut key_end = i + 1
+      while key_end < input_schema.length() && input_schema[key_end] != 34 { key_end = key_end + 1 }
+      let key = input_schema[i + 1 : key_end].to_owned()
+      let mut colon = key_end + 1
+      while colon < input_schema.length() && input_schema[colon] != 58 { colon = colon + 1 } // ':'
+      let mut vs = colon + 1
+      while vs < input_schema.length() && input_schema[vs] != 34 { vs = vs + 1 }
+      let mut ve = vs + 1
+      while ve < input_schema.length() && input_schema[ve] != 34 { ve = ve + 1 }
+      let typ = input_schema[vs + 1 : ve].to_owned()
+      if !first { result = result + "," }
+      result = result + "\"" + json_escape(key) + "\":{\"type\":\"" + json_escape(typ) + "\"}"
+      first = false
+      i = ve + 1
+    } else {
+      i = i + 1
+    }
+  }
+  result + "}"
+}
+
+/// Build the chat completion request body (stream=true)
+fn build_chat_body(
+  model : String,
+  messages_json : String,
+  tools_json : String,
+  max_tokens : Int,
+  temperature : Float,
+) -> String {
+  let tools_part = if tools_json.length() > 0 { ",\"tools\":" + tools_json } else { "" }
+  "{\"model\":\"" + json_escape(model) + "\",\"messages\":" + messages_json + tools_part +
+    ",\"max_tokens\":" + max_tokens.to_string() +
+    ",\"temperature\":" + temperature.to_string() +
+    ",\"stream\":true}"
+}
+
+/// Stream one completion request from DeepSeek, forwarding content to the client.
+/// Returns (full_response, tool_name, tool_args, tool_call_id, prompt_tokens, completion_tokens).
+/// tool_name/tool_args/tool_call_id are non-empty when the model issued a native function call.
+async fn stream_completion(
+  ctx : RuntimeContext,
+  body_str : String,
+  conn : @http.ServerConnection,
+) -> (String, String, String, String, Int, Int) {
+  let url = "https://api.deepseek.com/v1/chat/completions"
+  let req_headers = Map([
+    ("Content-Type", "application/json"),
+    ("Authorization", "Bearer " + ctx.api_key),
+  ])
+  
   let mut full_response = ""
+  let mut tool_name = ""
+  let mut tool_args = ""
+  let mut tool_call_id = ""
   let mut prompt_tokens = 0
   let mut completion_tokens = 0
+  // Raw JSON chunks that contain a native tool call. The arguments string of a
+  // function call is streamed across many SSE chunks, and the JSON escape
+  // sequences (e.g. \" inside arguments) can be split at chunk boundaries.
+  // Parsing each chunk independently corrupts the value, so we buffer the raw
+  // chunks and parse the whole buffer once after the stream finishes.
+  let mut tool_calls_raw = ""
+  
   try {
     let client = @http.post_stream(url, headers=req_headers)
     defer client.close()
@@ -810,77 +948,254 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     
     if resp.code != 200 {
       conn.write_string("data: Error: DeepSeek returned \{resp.code}\n\n")
-      conn.write_string("data: [DONE]\n\n")
-      return
+      return (full_response, tool_name, tool_args, tool_call_id, prompt_tokens, completion_tokens)
     }
     
-    // Forward streaming chunks from DeepSeek to client
+    // Forward streaming chunks from DeepSeek to client.
+    // SSE events can be split across read_some() calls, and a multi-byte UTF-8
+    // char (streamed Chinese content) can also be split at a buffer boundary.
+    // Decoding lossy + line buffering guarantees no whole buffer (which may
+    // contain tool-call payloads) is ever dropped.
+    let mut buf = ""
     while client.read_some() is Some(data) {
-      let text = @utf8.decode(data) catch { _ => continue }
-      let lines = text.split("\n")
-      for line in lines {
-        let owned = line.to_owned()
-        if owned.has_prefix("data: ") {
-          let payload = line[6:].to_owned()
-          if payload == "[DONE]" {
-            // Check if the response contains a tool call
-            match @lib.parse_tool_call(full_response) {
-              Some((tool_name, args_json)) => {
-                // Notify client about tool calling
-                conn.write_string("data: **[Tool Call]: " + tool_name + "**\n\n")
-                conn.flush()
-                
-                // Execute the tool
-                let tool_result = @lib.execute_tool(tool_name, args_json, ctx.data_dir)
-                
-                // Send tool result to client
-                conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
-                conn.flush()
-                
-                // Store the combined response (tool call + result) in conversation history
-                ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+      buf = buf + @utf8.decode_lossy(data)
+      while true {
+        match string_find(buf, "\n") {
+          None => break
+          Some(pos) => {
+            let line = buf[0 : pos].to_owned()
+            buf = buf[pos + 1 :].to_owned()
+            if line.has_prefix("data: ") {
+              let payload = line[6:].to_owned()
+              if payload == "[DONE]" {
+                // Parse the buffered tool-call JSON now that the stream is complete
+                if tool_calls_raw.length() > 0 {
+                  match extract_tool_call_id(tool_calls_raw) {
+                    Some(id) => tool_call_id = id
+                    None => ()
+                  }
+                  match extract_json_str_value(tool_calls_raw, "name") {
+                    Some(name) => tool_name = name
+                    None => ()
+                  }
+                  tool_args = unescape_json_str(extract_all_json_str_values(tool_calls_raw, "arguments"))
+                }
+                return (full_response, tool_name, tool_args, tool_call_id, prompt_tokens, completion_tokens)
               }
-              None => {
-                // No tool call, store response normally
-                ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+              // Check for usage info in the payload
+              if string_find(payload, "\"usage\"") is Some(_) {
+                match extract_usage_tokens(payload) {
+                  Some((pt, ct)) => {
+                    prompt_tokens = pt
+                    completion_tokens = ct
+                  }
+                  None => ()
+                }
               }
-            }
-            // Record stats with token usage if available
-            let output_chars = full_response.length()
-            ctx.stats_manager.record_conversation(
-              agent_id, input_chars, output_chars,
-              prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-            )
-            conn.write_string("data: [DONE]\n\n")
-          } else {
-            // Check for usage info in the payload
-            if string_find(payload, "\"usage\"") is Some(_) {
-              match extract_usage_tokens(payload) {
-                Some((pt, ct)) => {
-                  prompt_tokens = pt
-                  completion_tokens = ct
+              // Extract streamed content
+              match extract_content(payload) {
+                Some(content) => {
+                  full_response = full_response + content
+                  conn.write_string("data: " + content + "\n\n")
                 }
                 None => ()
               }
-            }
-            match extract_content(payload) {
-              Some(content) => {
-                full_response = full_response + content
-                conn.write_string("data: " + content + "\n\n")
+              // Buffer raw tool-call chunks for end-of-stream parsing
+              if string_find(payload, "\"tool_calls\"") is Some(_) {
+                tool_calls_raw = tool_calls_raw + payload
               }
-              None => ()
             }
           }
         }
       }
       conn.flush()
     }
+    // Stream ended without [DONE]: process the final partial line, if any
+    if buf.length() > 0 && buf.has_prefix("data: ") {
+      let payload = buf[6:].to_owned()
+      if string_find(payload, "\"tool_calls\"") is Some(_) {
+        tool_calls_raw = tool_calls_raw + payload
+      }
+      match extract_content(payload) {
+        Some(content) => {
+          full_response = full_response + content
+          conn.write_string("data: " + content + "\n\n")
+        }
+        None => ()
+      }
+    }
+    // Stream ended without [DONE]: parse any buffered tool-call JSON
+    if tool_calls_raw.length() > 0 {
+      match extract_tool_call_id(tool_calls_raw) {
+        Some(id) => tool_call_id = id
+        None => ()
+      }
+      match extract_json_str_value(tool_calls_raw, "name") {
+        Some(name) => tool_name = name
+        None => ()
+      }
+      tool_args = unescape_json_str(extract_all_json_str_values(tool_calls_raw, "arguments"))
+    }
   } catch {
     _ => {
       conn.write_string("data: Error: Failed to connect to DeepSeek\n\n")
-      conn.write_string("data: [DONE]\n\n")
     }
   }
+  (full_response, tool_name, tool_args, tool_call_id, prompt_tokens, completion_tokens)
+}
+
+/// Extract every string value of a JSON key in a raw SSE buffer (e.g. "arguments"),
+/// concatenating the raw (still-escaped) values. Used because a function-call
+/// arguments string is streamed across many chunks; each chunk carries a valid
+/// JSON string fragment, and concatenating the raw fragments lets us unescape
+/// once at the end without corrupting escapes split across chunk boundaries.
+fn extract_all_json_str_values(json : String, key : String) -> String {
+  let search = "\"" + key + "\":"
+  let mut result = ""
+  let mut search_from = 0
+  while search_from <= json.length() {
+    match string_find_from(json, search, search_from) {
+      None => break
+      Some(s) => {
+        let mut i = s + search.length()
+        while i < json.length() && (json[i] == 32 || json[i] == 9) {
+          i = i + 1
+        }
+        if i < json.length() && json[i] == 34 {
+          let mut j = i + 1
+          let mut end = -1
+          while j < json.length() {
+            if json[j] == 92 { // backslash: skip the escaped char
+              j = j + 2
+            } else if json[j] == 34 { // closing quote
+              end = j
+              break
+            } else {
+              j = j + 1
+            }
+          }
+          if end >= 0 {
+            result = result + json[i + 1 : end].to_owned()
+            search_from = end + 1
+          } else {
+            search_from = s + 1
+          }
+        } else {
+          search_from = s + 1
+        }
+      }
+    }
+  }
+  result
+}
+
+/// Find the first occurrence of a pattern starting from a given byte index
+fn string_find_from(s : String, pat : String, from : Int) -> Option[Int] {
+  if pat.length() == 0 { return Some(from) }
+  let max_start = s.length() - pat.length()
+  let mut i = if from < 0 { 0 } else { from }
+  while i <= max_start {
+    let mut matched = true
+    let mut j = 0
+    while j < pat.length() {
+      if s[i + j] != pat[j] { matched = false; break }
+      j = j + 1
+    }
+    if matched { return Some(i) }
+    i = i + 1
+  }
+  None
+}
+
+/// Extract the tool-call id from a raw tool-call buffer. The buffer contains
+/// many "id" keys (chat completion id, tool call id), so we match the
+/// "call_" prefix that identifies the tool call.
+fn extract_tool_call_id(json : String) -> Option[String] {
+  let search = "\"id\":\"call_"
+  match string_find(json, search) {
+    None => None
+    Some(s) => {
+      let start = s + 6 // after "\"id\":\""
+      let mut end = start
+      while end < json.length() && json[end] != 34 {
+        end = end + 1
+      }
+      if end > start { Some(json[start : end].to_owned()) } else { None }
+    }
+  }
+}
+
+/// Unescape a raw JSON string value (\" \\ \n \r \t) into its plain-text form
+fn unescape_json_str(raw : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < raw.length() {
+    let ch = raw[i]
+    if ch == 92 && i + 1 < raw.length() { // backslash
+      let next = raw[i + 1]
+      if next == 34 { result = result + "\""; i = i + 2 }
+      else if next == 92 { result = result + "\\"; i = i + 2 }
+      else if next == 110 { result = result + "\n"; i = i + 2 }
+      else if next == 114 { result = result + "\r"; i = i + 2 }
+      else if next == 116 { result = result + "\t"; i = i + 2 }
+      else {
+        match ch.to_char() {
+          Some(c) => result = result + c.to_string()
+          None => ()
+        }
+        i = i + 1
+      }
+    } else {
+      match ch.to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
+      i = i + 1
+    }
+  }
+  result
+}
+
+/// Extract the string value of a JSON key such as "key":"value" (or "key": "value"),
+/// unescaping \" \\ \n \r \t. Works on byte-indexed strings.
+fn extract_json_str_value(json : String, key : String) -> Option[String] {
+  let search = "\"" + key + "\":"
+  let start = match string_find(json, search) {
+    None => return None
+    Some(s) => s + search.length()
+  }
+  let mut i = start
+  while i < json.length() && (json[i] == 32 || json[i] == 9) {
+    i = i + 1
+  }
+  if i >= json.length() || json[i] != 34 {
+    return None
+  }
+  let mut result = ""
+  let mut j = i + 1
+  while j < json.length() {
+    let ch = json[j]
+    if ch == 92 { // backslash
+      if j + 1 < json.length() {
+        let next = json[j + 1]
+        if next == 34 { result = result + "\""; j = j + 2 }
+        else if next == 92 { result = result + "\\"; j = j + 2 }
+        else if next == 110 { result = result + "\n"; j = j + 2 }
+        else if next == 114 { result = result + "\r"; j = j + 2 }
+        else if next == 116 { result = result + "\t"; j = j + 2 }
+        else { j = j + 1 }
+      } else { j = j + 1 }
+    } else if ch == 34 { // closing quote
+      return Some(result)
+    } else {
+      match ch.to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
+      j = j + 1
+    }
+  }
+  None
 }
 
 /// Handle GET /api/tasks - list tasks, optionally filtered by agent_id
@@ -1168,34 +1483,32 @@ fn extract_query_param(query : String, param : String) -> Option[String] {
   None
 }
 
-/// Simple URL decode (handles %XX and +)
+/// Simple URL decode (handles %XX and +), preserving UTF-8 multi-byte sequences.
+/// Percent-encoded bytes are collected first, then decoded as one UTF-8 string,
+/// so multi-byte characters (e.g. Chinese) survive the round-trip.
 fn decode_url(s : String) -> String {
-  let mut result = ""
+  let bytes : Array[Byte] = []
   let mut i = 0
   while i < s.length() {
-    let ch = s[i]
+    let ch = s[i].to_int()
     if ch == 43 {
       // '+'
-      result = result + " "
+      bytes.push((32 : Byte))
+      i = i + 1
     } else if ch == 37 && i + 2 < s.length() {
-      // '%'
-      let hi = hex_to_int(s[i + 1])
-      let lo = hex_to_int(s[i + 2])
-      let code = hi * 16 + lo
-      match code.to_char() {
-        Some(c) => result = result + c.to_string()
-        None => ()
-      }
-      i = i + 2
+      // '%XX'
+      let code = hex_to_int(s[i + 1]) * 16 + hex_to_int(s[i + 2])
+      bytes.push(code.to_byte())
+      i = i + 3
     } else {
-      match ch.to_char() {
-        Some(c) => result = result + c.to_string()
-        None => ()
-      }
+      // Raw byte (may be part of a multi-byte UTF-8 char) passes through
+      bytes.push(ch.to_byte())
+      i = i + 1
     }
-    i = i + 1
   }
-  result
+  @utf8.decode(Bytes::from_array(bytes)) catch {
+    _ => s
+  }
 }
 
 /// Escape string for JSON (handle quotes, backslash, and control characters)
