@@ -229,7 +229,7 @@ async fn handle_agents_json(ctx : RuntimeContext, conn : @http.ServerConnection)
       None => ",\"stats\":null"
     }
     "{\"id\":\"" + json_escape(a.id) + "\",\"name\":\"" + json_escape(a.name) +
-      "\",\"model\":\"" + json_escape(a.model) + "\",\"max_tokens\":" +
+      "\",\"model\":\"" + json_escape(ctx.model) + "\",\"max_tokens\":" +
       a.max_tokens.to_string() + ",\"tool_ids\":\"" + json_escape(a.tool_ids) +
       "\"" + stats_json + "}"
   })
@@ -267,7 +267,7 @@ async fn handle_agent_create(ctx : RuntimeContext, body : &@io.Reader, conn : @h
   
   let id = extract_json_str(body_str, "id").unwrap_or("")
   let name = extract_json_str(body_str, "name").unwrap_or("")
-  let model = extract_json_str(body_str, "model").unwrap_or("gpt-4")
+  let model = extract_json_str(body_str, "model").unwrap_or(ctx.model)
   let instruction = extract_json_str(body_str, "instruction").unwrap_or("")
   let system_prompt = extract_json_str(body_str, "system_prompt").unwrap_or("")
   let max_tokens_str = extract_json_str(body_str, "max_tokens").unwrap_or("4096")
@@ -533,7 +533,7 @@ async fn handle_agent_detail(ctx : RuntimeContext, path : String, conn : @http.S
   // Build the full response
   let json = "{\"id\":\"" + json_escape(agent.id) +
     "\",\"name\":\"" + json_escape(agent.name) +
-    "\",\"model\":\"" + json_escape(agent.model) +
+    "\",\"model\":\"" + json_escape(ctx.model) +
     "\",\"instruction\":\"" + json_escape(agent.instruction) +
     "\",\"system_prompt\":\"" + json_escape(agent.system_prompt) +
     "\",\"max_tokens\":" + agent.max_tokens.to_string() +
