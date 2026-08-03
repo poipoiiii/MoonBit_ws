@@ -788,26 +788,58 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   ctx.agent_manager.add_message(agent_id, "user", message)
   let input_chars = message.length()
   
-  // Round 1: stream the model response (may contain a native function call)
-  let (full_response, tool_name, tool_args, tool_call_id, prompt_tokens, completion_tokens) =
-    stream_completion(ctx, body_str, conn)
-  
-  let mut output_chars = full_response.length()
-  
-  if tool_call_id.length() > 0 {
-    // Native function call detected: notify client and execute the tool
+  // Run model rounds: native function call -> execute tool -> feed result back,
+  // up to MAX_TOOL_ROUNDS times. The model may first emit empty/invalid
+  // arguments, so follow-up rounds let it correct itself using the tool's
+  // error message (and any tool call it issues in a follow-up is executed too).
+  let all_msg_parts : Array[String] = msgs
+  let mut round_body = body_str
+  let mut output_chars = 0
+  let mut prompt_tokens = 0
+  let mut completion_tokens = 0
+  let mut rounds = 0
+  while rounds < 4 {
+    let (resp, tool_name, tool_args, tool_call_id, pt, ct) =
+      stream_completion(ctx, round_body, conn)
+    if pt > 0 { prompt_tokens = pt }
+    if ct > 0 { completion_tokens = ct }
+    if tool_call_id.length() == 0 {
+      // No native tool call: on round 1, fall back to text-based tool detection
+      if rounds == 0 {
+        match @lib.parse_tool_call(resp) {
+          Some((tname, args_json)) => {
+            conn.write_string("data: **[Tool Call]: " + tname + "**\n\n")
+            conn.flush()
+            let tool_result = @lib.execute_tool(tname, args_json, ctx.data_dir)
+            conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
+            conn.flush()
+            ctx.agent_manager.add_message(agent_id, "assistant", resp)
+            output_chars = output_chars + resp.length()
+            break
+          }
+          None => {
+            ctx.agent_manager.add_message(agent_id, "assistant", resp)
+            output_chars = output_chars + resp.length()
+            break
+          }
+        }
+      }
+      ctx.agent_manager.add_message(agent_id, "assistant", resp)
+      output_chars = output_chars + resp.length()
+      break
+    }
+    // Native tool call: notify the client and execute the tool
     conn.write_string("data: **[Tool Call]: " + tool_name + "**\n\n")
     conn.flush()
-    
     let tool_result = @lib.execute_tool(tool_name, tool_args, ctx.data_dir)
-    
     conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
     conn.flush()
     
     // Store the assistant tool-call message in conversation history
-    ctx.agent_manager.add_message(agent_id, "assistant", full_response)
+    ctx.agent_manager.add_message(agent_id, "assistant", resp)
+    output_chars = output_chars + resp.length()
     
-    // Round 2: feed the tool result back to the model for the final answer
+    // Feed the tool result back to the model for the next round
     let assistant_tool_msg =
       "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"" +
       json_escape(tool_call_id) + "\",\"type\":\"function\",\"function\":{\"name\":\"" +
@@ -815,32 +847,13 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     let tool_msg =
       "{\"role\":\"tool\",\"tool_call_id\":\"" + json_escape(tool_call_id) +
       "\",\"content\":\"" + json_escape(tool_result) + "\"}"
-    let follow_json = "[" + msgs.join(",") + "," + assistant_tool_msg + "," + tool_msg + "]"
-    // Keep tools in the follow-up request so the model does not hallucinate
+    // Keep tools in every follow-up request so the model does not hallucinate
     // tool-call XML/text instead of producing the final answer
-    let follow_body = build_chat_body(ctx.model, follow_json, tools_json, agent.max_tokens, agent.temperature)
-    
-    let (final_response, _, _, _, _, _) = stream_completion(ctx, follow_body, conn)
-    ctx.agent_manager.add_message(agent_id, "assistant", final_response)
-    output_chars = final_response.length()
-  } else {
-    // No native tool call: fall back to text-based tool call detection
-    match @lib.parse_tool_call(full_response) {
-      Some((tname, args_json)) => {
-        conn.write_string("data: **[Tool Call]: " + tname + "**\n\n")
-        conn.flush()
-        
-        let tool_result = @lib.execute_tool(tname, args_json, ctx.data_dir)
-        
-        conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
-        conn.flush()
-        
-        ctx.agent_manager.add_message(agent_id, "assistant", full_response)
-      }
-      None => {
-        ctx.agent_manager.add_message(agent_id, "assistant", full_response)
-      }
-    }
+    all_msg_parts.push(assistant_tool_msg)
+    all_msg_parts.push(tool_msg)
+    let follow_json = "[" + all_msg_parts.join(",") + "]"
+    round_body = build_chat_body(ctx.model, follow_json, tools_json, agent.max_tokens, agent.temperature)
+    rounds = rounds + 1
   }
   
   // Record stats with token usage if available
@@ -861,16 +874,18 @@ fn build_tools_json(agent : @lib.Agent, registry : @lib.ToolRegistry) -> String 
   let tool_jsons = tools.map(fn(t) {
     "{\"type\":\"function\",\"function\":{\"name\":\"" + json_escape(t.name) +
       "\",\"description\":\"" + json_escape(t.description) +
-      "\",\"parameters\":{\"type\":\"object\",\"properties\":" + build_properties_schema(t.input_schema) +
-      ",\"required\":[]}}}"
+      "\",\"parameters\":" + build_parameters_schema(t.input_schema) + "}}"
   })
   "[" + tool_jsons.join(",") + "]"
 }
 
-/// Convert a simple properties map like {"expression": "string"} into a valid
-/// JSON Schema properties object: {"expression": {"type": "string"}}
-fn build_properties_schema(input_schema : String) -> String {
-  let mut result = "{"
+/// Convert a simple properties map like {"expression": "string", "path": "string"}
+/// into a valid JSON Schema parameters object with required fields:
+/// {"type":"object","properties":{"expression":{"type":"string"}},"required":["expression"]}
+/// Marking all keys as required prevents the model from emitting empty arguments {}.
+fn build_parameters_schema(input_schema : String) -> String {
+  let mut properties = "{"
+  let required : Array[String] = []
   let mut first = true
   let mut i = 0
   while i < input_schema.length() {
@@ -885,15 +900,18 @@ fn build_properties_schema(input_schema : String) -> String {
       let mut ve = vs + 1
       while ve < input_schema.length() && input_schema[ve] != 34 { ve = ve + 1 }
       let typ = input_schema[vs + 1 : ve].to_owned()
-      if !first { result = result + "," }
-      result = result + "\"" + json_escape(key) + "\":{\"type\":\"" + json_escape(typ) + "\"}"
+      if !first { properties = properties + "," }
+      properties = properties + "\"" + json_escape(key) + "\":{\"type\":\"" + json_escape(typ) + "\"}"
+      required.push(key)
       first = false
       i = ve + 1
     } else {
       i = i + 1
     }
   }
-  result + "}"
+  properties = properties + "}"
+  "{\"type\":\"object\",\"properties\":" + properties + ",\"required\":[" +
+    required.map(fn(k) { "\"" + json_escape(k) + "\"" }).join(",") + "]}"
 }
 
 /// Build the chat completion request body (stream=true)

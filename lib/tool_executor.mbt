@@ -14,13 +14,19 @@ pub async fn execute_tool(tool_name : String, args_json : String, data_dir : Str
   }
 }
 
-/// Extract a string value from JSON by key (simple parser)
+/// Extract a string value from JSON by key (simple parser, handles both
+/// `"key": "value"` and `"key":"value"` formats)
 fn extract_str(json : String, key : String) -> Option[String] {
-  let search = "\"" + key + "\": \""
-  let start = string_find(json, search)
+  let search1 = "\"" + key + "\": \""
+  let search2 = "\"" + key + "\":\""
+  let start = match string_find(json, search1) {
+    Some(s) => Some(s)
+    None => string_find(json, search2)
+  }
   match start {
     None => None
     Some(s) => {
+      let search = if string_find(json, search1) is Some(_) { search1 } else { search2 }
       let value_start = s + search.length()
       let mut result = ""
       let mut i = value_start
@@ -108,10 +114,253 @@ fn execute_calc(args : String) -> String {
   "计算结果: " + result.to_string()
 }
 
-/// Execute search_web - simulated search result
-fn execute_search(args : String) -> String {
-  let query = extract_str(args, "query").unwrap_or(args)
-  "搜索结果: 关于\"\{query}\"的搜索结果暂不可用。\n提示: 当前搜索功能为模拟模式，未连接真实搜索引擎。"
+/// Execute search_web - real web search via Bing RSS
+async fn execute_search(args : String) -> String {
+  let query = match extract_str(args, "query") {
+    Some(q) => q.trim(chars=" \t\r\n").to_string()
+    None => {
+      // Fall back to the raw args only when it is not a JSON object
+      let trimmed = args.trim(chars=" \t\r\n").to_string()
+      if trimmed.length() > 0 && trimmed[0].to_int() == 123 { "" } else { trimmed }
+    }
+  }
+  if query.length() == 0 {
+    return "错误: search_web 未收到有效的 query 参数 (收到: " + args + ")，请提供具体的搜索关键词后重试"
+  }
+  let url = "https://www.bing.com/search?format=rss&q=" + url_encode(query)
+  let headers = Map([
+    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+    ("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8"),
+  ])
+  // Request with a timeout; the http client does not follow redirects automatically
+  let request_result = match @async.with_timeout_opt(15000, () => @http.get(url, headers=headers)) {
+    Some(result) => result
+    None => return "错误: 搜索请求超时(15秒)"
+  }
+  let mut response = request_result.0
+  let mut body = request_result.1
+  // Follow up to 3 redirects manually (e.g. www.bing.com -> cn.bing.com)
+  let mut redirects = 0
+  while redirects < 3 && (response.code == 301 || response.code == 302 || response.code == 303 || response.code == 307) {
+    match response.headers.get("location") {
+      None => break
+      Some(loc) => {
+        let next_url = if loc.has_prefix("http") { loc } else { "https://www.bing.com" + loc }
+        let result = @http.get(next_url, headers=headers)
+        response = result.0
+        body = result.1
+        redirects = redirects + 1
+      }
+    }
+  }
+  if response.code != 200 {
+    return "错误: 搜索请求失败, HTTP 状态码 " + response.code.to_string()
+  }
+  let xml = body.text() catch {
+    _ => return "错误: 无法解码搜索结果页面"
+  }
+  parse_bing_rss(xml, query)
+}
+
+/// Percent-encode a string for use in a URL query (UTF-8 safe)
+fn url_encode(s : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < s.length() {
+    let v = s[i].to_int()
+    if (v >= 48 && v <= 57) || (v >= 65 && v <= 90) || (v >= 97 && v <= 122) || v == 45 || v == 95 || v == 46 || v == 126 {
+      match s[i].to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
+    } else if v == 32 {
+      result = result + "+"
+    } else {
+      result = result + "%" + hex_nibble(v / 16) + hex_nibble(v % 16)
+    }
+    i = i + 1
+  }
+  result
+}
+
+/// Convert a nibble (0-15) to its uppercase hex character
+fn hex_nibble(n : Int) -> String {
+  if n < 10 { (48 + n).to_string() } else { (55 + n).to_string() }
+}
+
+/// Parse Bing RSS search result XML into a readable text list
+fn parse_bing_rss(xml : String, query : String) -> String {
+  let results : Array[String] = []
+  let mut search_from = 0
+  while results.length() < 10 {
+    let item_start = match string_find_from(xml, "<item>", search_from) {
+      None => break
+      Some(pos) => pos
+    }
+    let item_end = match string_find_from(xml, "</item>", item_start) {
+      Some(pos) => pos
+      None => xml.length()
+    }
+    let item = xml[item_start : item_end].to_owned()
+    let title = extract_xml_tag(item, "title")
+    let link = extract_xml_tag(item, "link")
+    if title.length() > 0 && link.length() > 0 {
+      let description = extract_xml_tag(item, "description")
+      results.push("标题: " + title + "\n链接: " + link + "\n摘要: " + description)
+    }
+    search_from = item_end
+  }
+  if results.length() == 0 {
+    return "搜索结果: 未找到与\"\{query}\"相关的网页"
+  }
+  let mut output = "搜索结果 (\"" + query + "\", " + results.length().to_string() + " 条):"
+  let mut idx = 0
+  while idx < results.length() {
+    output = output + "\n\n" + (idx + 1).to_string() + ". " + results[idx]
+    idx = idx + 1
+  }
+  output
+}
+
+/// Extract the text content of a single XML tag like <title>...</title>
+fn extract_xml_tag(xml : String, tag : String) -> String {
+  let open = "<" + tag + ">"
+  let start = match string_find(xml, open) {
+    None => return ""
+    Some(pos) => pos + open.length()
+  }
+  let close = "</" + tag + ">"
+  let end = match string_find_from(xml, close, start) {
+    None => return ""
+    Some(pos) => pos
+  }
+  if end <= start { return "" }
+  strip_tags(decode_html_entities(xml[start : end].to_owned()))
+}
+
+/// Remove HTML tags from a string and trim surrounding whitespace
+fn strip_tags(s : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  let mut in_tag = false
+  while i < s.length() {
+    let c = s[i].to_int()
+    if c == 60 {
+      in_tag = true
+    } else if c == 62 {
+      in_tag = false
+    } else if !in_tag {
+      match s[i].to_char() {
+        Some(ch) => result = result + ch.to_string()
+        None => ()
+      }
+    }
+    i = i + 1
+  }
+  result.trim(chars=" \t\r\n").to_string()
+}
+
+/// Decode common HTML/XML entities (named and numeric)
+fn decode_html_entities(s : String) -> String {
+  let mut result = ""
+  let mut i = 0
+  while i < s.length() {
+    let c = s[i].to_int()
+    if c == 38 { // '&'
+      let semi = string_find_from(s, ";", i)
+      if semi is Some(end) && end - i <= 12 {
+        let entity = s[i + 1 : end].to_owned()
+        match entity {
+          "amp" => { result = result + "&"; i = end + 1 }
+          "lt" => { result = result + "<"; i = end + 1 }
+          "gt" => { result = result + ">"; i = end + 1 }
+          "quot" => { result = result + "\""; i = end + 1 }
+          "apos" => { result = result + "'"; i = end + 1 }
+          "nbsp" | "ensp" | "emsp" | "thinsp" => { result = result + " "; i = end + 1 }
+          _ =>
+            if entity.length() > 0 && entity[0].to_int() == 35 { // '#' numeric entity
+              let code = parse_entity_number(entity[1:].to_owned())
+              if code >= 32 && code <= 0x10FFFF {
+                result = result + Int::unsafe_to_char(code).to_string()
+                i = end + 1
+              } else {
+                match s[i].to_char() {
+                  Some(ch) => result = result + ch.to_string()
+                  None => ()
+                }
+                i = i + 1
+              }
+            } else {
+              match s[i].to_char() {
+                Some(ch) => result = result + ch.to_string()
+                None => ()
+              }
+              i = i + 1
+            }
+        }
+      } else {
+        match s[i].to_char() {
+          Some(ch) => result = result + ch.to_string()
+          None => ()
+        }
+        i = i + 1
+      }
+    } else {
+      match s[i].to_char() {
+        Some(ch) => result = result + ch.to_string()
+        None => ()
+      }
+      i = i + 1
+    }
+  }
+  result
+}
+
+/// Parse a numeric HTML entity like "123" or "x1F600" (without the leading #)
+fn parse_entity_number(num_str : String) -> Int {
+  if num_str.length() == 0 { return -1 }
+  let mut is_hex = false
+  let mut i = 0
+  let first = num_str[0].to_int()
+  if first == 120 || first == 88 { // 'x' or 'X'
+    is_hex = true
+    i = 1
+  }
+  let mut code = 0
+  let mut ok = true
+  while i < num_str.length() {
+    let c = num_str[i].to_int()
+    if c >= 48 && c <= 57 {
+      code = code * (if is_hex { 16 } else { 10 }) + (c - 48)
+    } else if is_hex && c >= 97 && c <= 102 {
+      code = code * 16 + (c - 87)
+    } else if is_hex && c >= 65 && c <= 70 {
+      code = code * 16 + (c - 55)
+    } else {
+      ok = false
+      break
+    }
+    i = i + 1
+  }
+  if ok { code } else { -1 }
+}
+
+/// Find the first occurrence of a pattern starting from a given byte index
+fn string_find_from(s : String, pat : String, from : Int) -> Option[Int] {
+  if pat.length() == 0 { return Some(from) }
+  let max_start = s.length() - pat.length()
+  let mut i = if from < 0 { 0 } else { from }
+  while i <= max_start {
+    let mut matched = true
+    let mut j = 0
+    while j < pat.length() {
+      if s[i + j] != pat[j] { matched = false; break }
+      j = j + 1
+    }
+    if matched { return Some(i) }
+    i = i + 1
+  }
+  None
 }
 
 /// Execute read_file - read local file content

@@ -266,11 +266,11 @@ pub fn Agent::build_prompt(
   // Inject tool information if agent has assigned tools
   let tools = self.get_tools(registry)
   if tools.length() > 0 {
-    system_text = system_text + "\n\n## 可用工具\n你可以调用以下工具来完成任务：\n"
+    system_text = system_text + "\n\n## 可用工具\n你可以调用以下工具来完成任务，必须按参数名提供完整参数：\n"
     for tool in tools {
-      system_text = system_text + "- " + tool.name + ": " + tool.description + "\n"
+      system_text = system_text + "- " + tool.name + ": " + tool.description + " (参数: " + tool.input_schema + ")\n"
     }
-    system_text = system_text + "\n需要工具时请直接发起函数调用（function call），不要输出JSON文本。工具执行后根据返回结果给用户最终答复。"
+    system_text = system_text + "\n需要工具时请直接发起函数调用（function call），并在 arguments 中填入工具所需的完整 JSON 参数对象（例如 search_web 必须包含 query 字段）。不要在回复正文中输出 JSON。工具执行后根据返回结果给用户最终答复。"
   }
   
   // Inject pending/running tasks if any
