@@ -70,6 +70,10 @@ async fn main {
   stats_manager.init(agent_manager)
   println("Tracking stats for \{agent_manager.count()} agents")
   
+  // Query system info for the runtime monitor (used by /api/runtime)
+  let total_memory_mb = get_system_info()
+  println("System memory: \{total_memory_mb} MB")
+  
   // Create runtime context
   let ctx = RuntimeContext::{
     api_key: api_key,
@@ -80,6 +84,7 @@ async fn main {
     stats_manager: stats_manager,
     data_dir: data_dir,
     cors_origin: cors_origin,
+    total_memory_mb: total_memory_mb,
   }
   
   // Start HTTP server
@@ -103,6 +108,7 @@ struct RuntimeContext {
   stats_manager : @lib.StatsManager
   data_dir : String
   cors_origin : String
+  total_memory_mb : Int
 }
 
 /// Build CORS headers for cross-origin requests
@@ -148,6 +154,8 @@ async fn handle_request(
       handle_agent_stats(ctx, path, conn)
     } else if path == "/api/tools" {
       handle_tools_json(ctx, conn)
+    } else if path == "/api/runtime" {
+      handle_runtime_json(ctx, conn)
     } else if path.has_prefix("/api/tasks") {
       handle_tasks_list(ctx, path, conn)
     } else if path.has_prefix("/api/chat/history") {
@@ -606,6 +614,78 @@ async fn handle_tools_json(ctx : RuntimeContext, conn : @http.ServerConnection) 
     "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   conn.write_string(json)
+}
+
+/// Handle /api/runtime - return process memory and CPU usage
+async fn handle_runtime_json(ctx : RuntimeContext, conn : @http.ServerConnection) -> Unit {
+  let (memory_mb, cpu_ms) = get_process_stats()
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"memory_mb\":" + memory_mb.to_string() +
+    ",\"cpu_ms\":" + cpu_ms.to_string() +
+    ",\"total_memory_mb\":" + ctx.total_memory_mb.to_string() + "}")
+}
+
+/// Query total physical memory in MB via PowerShell (called once at startup)
+async fn get_system_info() -> Int {
+  let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $os=Get-CimInstance Win32_OperatingSystem; Write-Output ([math]::Round($os.TotalVisibleMemorySize*1KB/1MB).ToString())"
+  let (_, output) = @process.collect_stdout("powershell", ["-NoProfile", "-NonInteractive", "-Command", script]) catch {
+    _ => return 0
+  }
+  let raw = output.text() catch {
+    _ => return 0
+  }
+  parse_clean_int(raw)
+}
+
+/// Query the runtime process working set (MB) and CPU time (ms) via PowerShell
+async fn get_process_stats() -> (Int, Int) {
+  let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $p=Get-Process -Name main -ErrorAction SilentlyContinue; if($p){Write-Output ([math]::Round($p.WorkingSet64/1MB).ToString() + ';' + [math]::Round($p.CPU*1000).ToString())}else{Write-Output '0;0'}"
+  let (_, output) = @process.collect_stdout("powershell", ["-NoProfile", "-NonInteractive", "-Command", script]) catch {
+    _ => return (0, 0)
+  }
+  let raw = output.text() catch {
+    _ => return (0, 0)
+  }
+  parse_pair_clean(raw)
+}
+
+/// Keep only ASCII digit bytes (tolerates BOM/UTF-16 nulls/whitespace) and parse as int
+/// NOTE: s[i] yields a byte; s[i].to_string() gives its decimal value, so convert manually
+fn parse_clean_int(s : String) -> Int {
+  let mut cleaned = ""
+  let mut i = 0
+  while i < s.length() {
+    let b = s[i]
+    if b >= 48 && b <= 57 {
+      cleaned = cleaned + (b.to_int() - 48).to_string()
+    }
+    i = i + 1
+  }
+  @lib.parse_int(cleaned)
+}
+
+/// Parse "a;b" output into a pair of ints, tolerating BOM/UTF-16 nulls/whitespace
+fn parse_pair_clean(s : String) -> (Int, Int) {
+  let mut cleaned = ""
+  let mut i = 0
+  while i < s.length() {
+    let b = s[i]
+    if b >= 48 && b <= 57 {
+      cleaned = cleaned + (b.to_int() - 48).to_string()
+    } else if b == 59 {
+      cleaned = cleaned + ";"
+    }
+    i = i + 1
+  }
+  let parts = cleaned.split(";").to_array()
+  if parts.length() >= 2 {
+    (@lib.parse_int(parts[0].to_owned()), @lib.parse_int(parts[1].to_owned()))
+  } else {
+    (0, 0)
+  }
 }
 
 /// Handle /api/chat/history - return conversation history for an agent

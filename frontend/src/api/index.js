@@ -23,6 +23,16 @@ export async function fetchTools() {
 }
 
 /**
+ * 获取运行时资源使用情况（进程内存与 CPU）
+ * @returns {Promise<{memory_mb:number, cpu_ms:number, total_memory_mb:number}>}
+ */
+export async function fetchRuntime() {
+  const res = await fetch(`${API_BASE}/runtime`)
+  if (!res.ok) throw new Error(`Failed to fetch runtime: ${res.status}`)
+  return res.json()
+}
+
+/**
  * 创建 SSE 聊天流
  * @param {string} agentId - Agent ID
  * @param {string} message - 用户消息

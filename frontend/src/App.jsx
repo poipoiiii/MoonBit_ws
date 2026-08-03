@@ -4,7 +4,7 @@ import {
   Terminal, Send, CircleDot, Loader2, WifiOff,
   Sun, Moon, X, Info, Bot
 } from 'lucide-react'
-import { fetchAgents, fetchTools, createChatStream } from './api'
+import { fetchAgents, fetchTools, fetchRuntime, createChatStream } from './api'
 import { useTheme } from './ThemeContext'
 import MarkdownMessage from './components/MarkdownMessage'
 
@@ -73,6 +73,8 @@ function App() {
   const logEndRef = useRef(null)
   const inputRef = useRef(null)
   const abortRef = useRef(null)
+  const cpuSampleRef = useRef({ cpuMs: 0, time: 0 })
+  const [runtime, setRuntime] = useState({ memoryMb: null, cpuPct: null, totalMemoryMb: null })
 
   const examplePrompts = [
     '你好，宁波距离山东多远',
@@ -121,6 +123,30 @@ function App() {
     }
     load()
     return () => { cancelled = true }
+  }, [])
+
+  /* ── Poll runtime stats (memory / CPU) ── */
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const data = await fetchRuntime()
+        if (cancelled) return
+        const now = Date.now()
+        const prev = cpuSampleRef.current
+        let cpuPct = null
+        if (prev.time > 0 && data.cpu_ms >= prev.cpuMs && now > prev.time) {
+          cpuPct = Math.min(100, Math.max(0, Math.round(((data.cpu_ms - prev.cpuMs) / (now - prev.time)) * 100)))
+        }
+        cpuSampleRef.current = { cpuMs: data.cpu_ms, time: now }
+        setRuntime({ memoryMb: data.memory_mb, cpuPct, totalMemoryMb: data.total_memory_mb })
+      } catch {
+        if (!cancelled) setRuntime(prev => ({ ...prev, cpuPct: null }))
+      }
+    }
+    poll()
+    const timer = setInterval(poll, 3000)
+    return () => { cancelled = true; clearInterval(timer) }
   }, [])
 
   /* ── Auto-scroll ── */
@@ -309,10 +335,14 @@ function App() {
               <span className="flex items-center gap-1" style={{ color: 'var(--text-dim)' }}>
                 <MemoryStick className="w-3 h-3" /> Memory
               </span>
-              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>-- MB</span>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {runtime.memoryMb != null ? `${runtime.memoryMb} MB` : '-- MB'}
+              </span>
             </div>
             <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-              <div className="h-0 w-0 bg-blue-500/70 rounded-full transition-all duration-700" />
+              <div className="h-full bg-blue-500/70 rounded-full transition-all duration-700" style={{
+                width: runtime.totalMemoryMb ? `${Math.min(100, (runtime.memoryMb / runtime.totalMemoryMb) * 100)}%` : '0%'
+              }} />
             </div>
           </div>
           <div>
@@ -320,10 +350,14 @@ function App() {
               <span className="flex items-center gap-1" style={{ color: 'var(--text-dim)' }}>
                 <Cpu className="w-3 h-3" /> CPU
               </span>
-              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>--%</span>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {runtime.cpuPct != null ? `${runtime.cpuPct}%` : '--%'}
+              </span>
             </div>
             <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
-              <div className="h-0 w-0 bg-purple-500/70 rounded-full transition-all duration-700" />
+              <div className="h-full bg-purple-500/70 rounded-full transition-all duration-700" style={{
+                width: runtime.cpuPct != null ? `${runtime.cpuPct}%` : '0%'
+              }} />
             </div>
           </div>
           {tools.length > 0 && (
