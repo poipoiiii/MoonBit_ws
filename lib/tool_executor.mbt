@@ -114,24 +114,69 @@ fn execute_calc(args : String) -> String {
   "计算结果: " + result.to_string()
 }
 
-/// Execute search_web - real web search via Bing RSS
-async fn execute_search(args : String) -> String {
-  let query = match extract_str(args, "query") {
-    Some(q) => q.trim(chars=" \t\r\n").to_string()
-    None => {
-      // Fall back to the raw args only when it is not a JSON object
-      let trimmed = args.trim(chars=" \t\r\n").to_string()
-      if trimmed.length() > 0 && trimmed[0].to_int() == 123 { "" } else { trimmed }
+/// Extract the "query" argument from tool-call arguments, tolerating the
+/// wrappers the model sometimes emits when it issues parallel tool calls,
+/// e.g. {"arguments": "{\"query\": ...}"} or deeply nested {"arguments":
+/// {"arguments": ...}}. Unwraps "arguments" layers until a non-empty "query"
+/// is found.
+fn extract_search_query(args : String) -> String {
+  let mut current = args
+  let mut depth = 0
+  while depth < 12 {
+    match extract_str(current, "query") {
+      Some(q) => {
+        let t = q.trim(chars=" \t\r\n").to_string()
+        if t.length() > 0 { return t }
+      }
+      None => ()
+    }
+    match extract_str(current, "arguments") {
+      Some(inner) => {
+        let t = inner.trim(chars=" \t\r\n").to_string()
+        if t.length() == 0 { break }
+        current = t
+        depth = depth + 1
+      }
+      None => break
     }
   }
+  // Fall back to the raw args only when it is not a JSON object
+  let trimmed = args.trim(chars=" \t\r\n").to_string()
+  if trimmed.length() > 0 && trimmed[0].to_int() == 123 { "" } else { trimmed }
+}
+
+/// Execute search_web - real web search via Bing RSS
+async fn execute_search(args : String) -> String {
+  let query = extract_search_query(args)
   if query.length() == 0 {
     return "错误: search_web 未收到有效的 query 参数 (收到: " + args + ")，请提供具体的搜索关键词后重试"
   }
-  let url = "https://www.bing.com/search?format=rss&q=" + url_encode(query)
+  let cleaned_query = sanitize_query(query)
+  let url = "https://www.bing.com/search?format=rss&q=" + url_encode(cleaned_query)
   let headers = Map([
     ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
     ("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8"),
   ])
+  // Retry once if the connection drops mid-read (Bing occasionally closes the
+  // connection on repeated requests, raising ReaderClosed).
+  let mut attempt = 0
+  while attempt < 2 {
+    let result = try {
+      do_search(cleaned_query, url, headers)
+    } catch {
+      e => "错误: 搜索连接异常: " + e.to_string()
+    }
+    if result.has_prefix("错误: 搜索连接异常:") {
+      attempt = attempt + 1
+    } else {
+      return result
+    }
+  }
+  "错误: 搜索连接异常: 两次尝试均失败, query=[" + cleaned_query + "], url=" + url
+}
+
+/// Perform one Bing RSS search request and format the results.
+async fn do_search(cleaned_query : String, url : String, headers : Map[String, String]) -> String {
   // Request with a timeout; the http client does not follow redirects automatically
   let request_result = match @async.with_timeout_opt(15000, () => @http.get(url, headers=headers)) {
     Some(result) => result
@@ -154,38 +199,88 @@ async fn execute_search(args : String) -> String {
     }
   }
   if response.code != 200 {
-    return "错误: 搜索请求失败, HTTP 状态码 " + response.code.to_string()
+    return "错误: 搜索请求失败, HTTP 状态码 " + response.code.to_string() + ", query=[" + cleaned_query + "], url=" + url
   }
   let xml = body.text() catch {
     _ => return "错误: 无法解码搜索结果页面"
   }
-  parse_bing_rss(xml, query)
+  parse_bing_rss(xml, cleaned_query)
 }
 
 /// Percent-encode a string for use in a URL query (UTF-8 safe)
-fn url_encode(s : String) -> String {
+pub fn url_encode(s : String) -> String {
   let mut result = ""
   let mut i = 0
   while i < s.length() {
-    let v = s[i].to_int()
-    if (v >= 48 && v <= 57) || (v >= 65 && v <= 90) || (v >= 97 && v <= 122) || v == 45 || v == 95 || v == 46 || v == 126 {
+    let cp = s[i].to_int()
+    if (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) || cp == 45 || cp == 95 || cp == 46 || cp == 126 {
       match s[i].to_char() {
         Some(c) => result = result + c.to_string()
         None => ()
       }
-    } else if v == 32 {
+    } else if cp == 32 {
       result = result + "+"
     } else {
-      result = result + "%" + hex_nibble(v / 16) + hex_nibble(v % 16)
+      // String indexing yields a Unicode code point; encode it to UTF-8 bytes
+      // then percent-encode each byte (%XX)
+      let bytes = utf8_bytes(cp)
+      for b in bytes {
+        let v = b.to_int()
+        result = result + "%" + hex_nibble(v / 16) + hex_nibble(v % 16)
+      }
     }
     i = i + 1
   }
   result
 }
 
-/// Convert a nibble (0-15) to its uppercase hex character
+/// Encode a Unicode code point into its UTF-8 byte sequence
+fn utf8_bytes(cp : Int) -> Array[Byte] {
+  if cp <= 0x7F {
+    [cp.to_byte()]
+  } else if cp <= 0x7FF {
+    [(0xC0 | (cp >> 6)).to_byte(), (0x80 | (cp & 0x3F)).to_byte()]
+  } else if cp <= 0xFFFF {
+    [(0xE0 | (cp >> 12)).to_byte(), (0x80 | ((cp >> 6) & 0x3F)).to_byte(), (0x80 | (cp & 0x3F)).to_byte()]
+  } else {
+    [(0xF0 | (cp >> 18)).to_byte(), (0x80 | ((cp >> 12) & 0x3F)).to_byte(), (0x80 | ((cp >> 6) & 0x3F)).to_byte(), (0x80 | (cp & 0x3F)).to_byte()]
+  }
+}
+
+/// Convert a nibble (0-15) to its uppercase hex character ('0'-'9', 'A'-'F')
 fn hex_nibble(n : Int) -> String {
-  if n < 10 { (48 + n).to_string() } else { (55 + n).to_string() }
+  if n < 10 { Int::unsafe_to_char(48 + n).to_string() } else { Int::unsafe_to_char(55 + n).to_string() }
+}
+
+/// Collapse whitespace control characters (\n \r \t and runs of spaces) into a single space.
+/// Bing's RSS endpoint rejects queries containing line breaks with HTTP 400.
+fn sanitize_query(s : String) -> String {
+  let mut result = ""
+  let mut prev_space = false
+  let mut i = 0
+  while i < s.length() {
+    let v = s[i].to_int()
+    if v == 10 || v == 13 || v == 9 || v == 32 {
+      if !prev_space {
+        result = result + " "
+        prev_space = true
+      }
+    } else {
+      match s[i].to_char() {
+        Some(c) => result = result + c.to_string()
+        None => ()
+      }
+      prev_space = false
+    }
+    i = i + 1
+  }
+  if result.length() > 0 && result[0] == ' ' {
+    result = result[1:].to_owned()
+  }
+  if result.length() > 0 && result[result.length()-1] == ' ' {
+    result = result[:result.length()-1].to_owned()
+  }
+  result
 }
 
 /// Parse Bing RSS search result XML into a readable text list
@@ -214,12 +309,89 @@ fn parse_bing_rss(xml : String, query : String) -> String {
     return "搜索结果: 未找到与\"\{query}\"相关的网页"
   }
   let mut output = "搜索结果 (\"" + query + "\", " + results.length().to_string() + " 条):"
+  if !results_relevant(results, query) {
+    output = output +
+      "\n\n提示: 以上搜索结果似乎与该主题不相关（结果中未出现查询关键词），请改用更短更通用的关键词重新搜索，例如直接使用指数名称或代码（如: 标普500 行情 / SPX / KS11）。"
+  }
   let mut idx = 0
   while idx < results.length() {
     output = output + "\n\n" + (idx + 1).to_string() + ". " + results[idx]
     idx = idx + 1
   }
   output
+}
+
+/// Whether any search result title contains a meaningful key term from the query
+/// (e.g. "标普" or "KOSPI"). Bing's RSS sometimes tokenizes a Chinese query so
+/// badly that it returns pages about a single character; flagging that lets the
+/// model pick a shorter, more precise keyword instead of retrying the same one.
+fn results_relevant(results : Array[String], query : String) -> Bool {
+  let cjk_terms = extract_cjk_terms(query)
+  let en_term = extract_en_term(query)
+  for r in results {
+    if en_term.length() >= 3 {
+      if string_find(r, en_term) is Some(_) { return true }
+    }
+    for t in cjk_terms {
+      if string_find(r, t) is Some(_) { return true }
+    }
+  }
+  false
+}
+
+/// Extract runs of 2+ consecutive CJK characters from a string (e.g. "标普")
+fn extract_cjk_terms(s : String) -> Array[String] {
+  let terms : Array[String] = []
+  let mut i = 0
+  while i < s.length() {
+    let cp = s[i].to_int()
+    if cp >= 0x4E00 && cp <= 0x9FFF {
+      let mut j = i
+      while j < s.length() {
+        let c2 = s[j].to_int()
+        if c2 >= 0x4E00 && c2 <= 0x9FFF {
+          j = j + 1
+        } else {
+          break
+        }
+      }
+      if j - i >= 2 {
+        let seg = s[i : j].to_owned()
+        let mut dup = false
+        for t in terms {
+          if t == seg { dup = true; break }
+        }
+        if !dup { terms.push(seg) }
+      }
+      i = j
+    } else {
+      i = i + 1
+    }
+  }
+  terms
+}
+
+/// Extract the longest run of 3+ ASCII letters/digits from a string (e.g. "KOSPI")
+fn extract_en_term(s : String) -> String {
+  let mut best = ""
+  let mut cur = ""
+  let mut i = 0
+  while i < s.length() {
+    let cp = s[i].to_int()
+    let is_alnum = (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122)
+    if is_alnum {
+      match s[i].to_char() {
+        Some(c) => cur = cur + c.to_string()
+        None => ()
+      }
+    } else {
+      if cur.length() >= 3 && cur.length() > best.length() { best = cur }
+      cur = ""
+    }
+    i = i + 1
+  }
+  if cur.length() >= 3 && cur.length() > best.length() { best = cur }
+  best
 }
 
 /// Extract the text content of a single XML tag like <title>...</title>

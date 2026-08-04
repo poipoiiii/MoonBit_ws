@@ -65,6 +65,17 @@ async fn main {
     }
   }
   
+  let super_task_manager = match @lib.SuperTaskManager::load(data_dir + "/super_tasks.csv") {
+    Ok(mgr) => {
+      println("Loaded \{mgr.count()} super tasks")
+      mgr
+    }
+    Err(e) => {
+      println("Warning: Failed to load super tasks: \{e}")
+      @lib.SuperTaskManager::new(Map([], capacity=0))
+    }
+  }
+  
   // Initialize stats manager from agents
   let stats_manager = @lib.StatsManager::new(Map([], capacity=agent_manager.count()))
   stats_manager.init(agent_manager)
@@ -81,6 +92,7 @@ async fn main {
     agent_manager: agent_manager,
     tool_registry: tool_registry,
     task_manager: task_manager,
+    super_task_manager: super_task_manager,
     stats_manager: stats_manager,
     data_dir: data_dir,
     cors_origin: cors_origin,
@@ -105,6 +117,7 @@ struct RuntimeContext {
   agent_manager : @lib.AgentManager
   tool_registry : @lib.ToolRegistry
   task_manager : @lib.TaskManager
+  super_task_manager : @lib.SuperTaskManager
   stats_manager : @lib.StatsManager
   data_dir : String
   cors_origin : String
@@ -156,6 +169,10 @@ async fn handle_request(
       handle_tools_json(ctx, conn)
     } else if path == "/api/runtime" {
       handle_runtime_json(ctx, conn)
+    } else if path.has_prefix("/api/super_tasks/run") {
+      handle_super_task_run(ctx, path, conn)
+    } else if path == "/api/super_tasks" {
+      handle_super_tasks_json(ctx, conn)
     } else if path.has_prefix("/api/tasks") {
       handle_tasks_list(ctx, path, conn)
     } else if path.has_prefix("/api/chat/history") {
@@ -172,7 +189,9 @@ async fn handle_request(
       conn.write_string("404 Not Found")
     }
   } else if meth is Post {
-    if path == "/api/tasks" {
+    if path == "/api/super_tasks" {
+      handle_super_task_create(ctx, body, conn)
+    } else if path == "/api/tasks" {
       handle_task_create(ctx, body, conn)
     } else if path == "/api/agents" {
       handle_agent_create(ctx, body, conn)
@@ -196,7 +215,9 @@ async fn handle_request(
       conn.write_string("404 Not Found")
     }
   } else if meth is Delete {
-    if path.has_prefix("/api/agents") {
+    if path.has_prefix("/api/super_tasks") {
+      handle_super_task_delete(ctx, path, conn)
+    } else if path.has_prefix("/api/agents") {
       handle_agent_delete(ctx, path, conn)
     } else if path.has_prefix("/api/tasks") {
       handle_task_delete(ctx, path, conn)
@@ -792,13 +813,15 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
   // up to MAX_TOOL_ROUNDS times. The model may first emit empty/invalid
   // arguments, so follow-up rounds let it correct itself using the tool's
   // error message (and any tool call it issues in a follow-up is executed too).
+  // 24 rounds lets a super task (e.g. researching several market indices)
+  // run several sequential searches and still produce its final report.
   let all_msg_parts : Array[String] = msgs
   let mut round_body = body_str
   let mut output_chars = 0
   let mut prompt_tokens = 0
   let mut completion_tokens = 0
   let mut rounds = 0
-  while rounds < 4 {
+  while rounds < 24 {
     let (resp, tool_name, tool_args, tool_call_id, pt, ct) =
       stream_completion(ctx, round_body, conn)
     if pt > 0 { prompt_tokens = pt }
@@ -810,7 +833,11 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
           Some((tname, args_json)) => {
             conn.write_string("data: **[Tool Call]: " + tname + "**\n\n")
             conn.flush()
-            let tool_result = @lib.execute_tool(tname, args_json, ctx.data_dir)
+            let tool_result = try {
+              @lib.execute_tool(tname, args_json, ctx.data_dir)
+            } catch {
+              e => "错误: 工具执行异常: " + e.to_string()
+            }
             conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
             conn.flush()
             ctx.agent_manager.add_message(agent_id, "assistant", resp)
@@ -831,7 +858,11 @@ async fn handle_chat_sse(ctx : RuntimeContext, path : String, conn : @http.Serve
     // Native tool call: notify the client and execute the tool
     conn.write_string("data: **[Tool Call]: " + tool_name + "**\n\n")
     conn.flush()
-    let tool_result = @lib.execute_tool(tool_name, tool_args, ctx.data_dir)
+    let tool_result = try {
+      @lib.execute_tool(tool_name, tool_args, ctx.data_dir)
+    } catch {
+      e => "错误: 工具执行异常: " + e.to_string()
+    }
     conn.write_string("data: **[Tool Result]:**\n" + tool_result + "\n\n")
     conn.flush()
     
@@ -1301,6 +1332,151 @@ async fn handle_task_create(ctx : RuntimeContext, body : &@io.Reader, conn : @ht
     "Access-Control-Allow-Origin": ctx.cors_origin,
   })
   conn.write_string("{\"status\":\"ok\",\"task_id\":\"" + json_escape(id) + "\"}")
+}
+
+/// Handle GET /api/super_tasks - return JSON list of super tasks
+async fn handle_super_tasks_json(ctx : RuntimeContext, conn : @http.ServerConnection) -> Unit {
+  let tasks = ctx.super_task_manager.list_all()
+  let json_parts = tasks.map(fn(st) {
+    "{\"id\":\"" + json_escape(st.id) + "\",\"name\":\"" + json_escape(st.name) +
+      "\",\"description\":\"" + json_escape(st.description) +
+      "\",\"agent_id\":\"" + json_escape(st.agent_id) +
+      "\",\"created_at\":\"" + json_escape(st.created_at) + "\"}"
+  })
+  let json = "[" + json_parts.join(",") + "]"
+  
+  conn.send_response(200, "OK", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string(json)
+}
+
+/// Handle POST /api/super_tasks - create a custom super task
+async fn handle_super_task_create(ctx : RuntimeContext, body : &@io.Reader, conn : @http.ServerConnection) -> Unit {
+  let body_data = body.read_all() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Cannot read request body")
+      return
+    }
+  }
+  let body_str = body_data.text() catch {
+    _ => {
+      conn.send_response(400, "Bad Request", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Invalid UTF-8 in request body")
+      return
+    }
+  }
+  
+  let name = extract_json_str(body_str, "name").unwrap_or("")
+  let description = extract_json_str(body_str, "description").unwrap_or("")
+  let agent_id = extract_json_str(body_str, "agent_id").unwrap_or("agent_005")
+  
+  if name.length() == 0 || description.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing required fields: name, description")
+    return
+  }
+  
+  // Pick the first free numeric id (st_001 is reserved for the default task)
+  let mut n = ctx.super_task_manager.count() + 1
+  let mut id = "st_" + n.to_string()
+  while ctx.super_task_manager.find(id) is Some(_) {
+    n = n + 1
+    id = "st_" + n.to_string()
+  }
+  let st = ctx.super_task_manager.create(id, name, description, agent_id)
+  let _ = ctx.super_task_manager.save(ctx.data_dir + "/super_tasks.csv") catch { _ => Ok(()) }
+  
+  conn.send_response(201, "Created", extra_headers={
+    "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": ctx.cors_origin,
+  })
+  conn.write_string("{\"status\":\"ok\",\"id\":\"" + json_escape(st.id) + "\",\"name\":\"" +
+    json_escape(st.name) + "\",\"description\":\"" + json_escape(st.description) +
+    "\",\"agent_id\":\"" + json_escape(st.agent_id) +
+    "\",\"created_at\":\"" + json_escape(st.created_at) + "\"}")
+}
+
+/// Handle DELETE /api/super_tasks?id=... - delete a custom super task
+async fn handle_super_task_delete(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let id = extract_query_param(query, "id").unwrap_or("")
+  
+  if id.length() == 0 {
+    conn.send_response(400, "Bad Request", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Missing id parameter")
+    return
+  }
+  if id == "st_001" {
+    conn.send_response(403, "Forbidden", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("The default super task cannot be deleted")
+    return
+  }
+  
+  if ctx.super_task_manager.delete(id) {
+    let _ = ctx.super_task_manager.save(ctx.data_dir + "/super_tasks.csv") catch { _ => Ok(()) }
+    conn.send_response(200, "OK", extra_headers={
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("{\"status\":\"ok\",\"deleted\":\"" + json_escape(id) + "\"}")
+  } else {
+    conn.send_response(404, "Not Found", extra_headers={
+      "Content-Type": "text/plain",
+      "Access-Control-Allow-Origin": ctx.cors_origin,
+    })
+    conn.write_string("Super task not found: " + id)
+  }
+}
+
+/// Handle GET /api/super_tasks/run?id=... - execute a super task
+/// Reuses the chat SSE pipeline: the task description becomes the user message,
+/// and the agent autonomously calls tools (e.g. search_web) until it reports back.
+async fn handle_super_task_run(ctx : RuntimeContext, path : String, conn : @http.ServerConnection) -> Unit {
+  let query = match string_find(path, "?") {
+    Some(pos) => path[pos+1:].to_string()
+    None => ""
+  }
+  let id = extract_query_param(query, "id").unwrap_or("")
+  let agent_override = extract_query_param(query, "agent_id").unwrap_or("")
+  
+  let st = match ctx.super_task_manager.find(id) {
+    Some(s) => s
+    None => {
+      conn.send_response(404, "Not Found", extra_headers={
+        "Content-Type": "text/plain",
+        "Access-Control-Allow-Origin": ctx.cors_origin,
+      })
+      conn.write_string("Super task not found: " + id)
+      return
+    }
+  }
+  let agent_id = if agent_override.length() > 0 { agent_override } else { st.agent_id }
+  let guided_message = st.description +
+    "\n\n执行指引：请把该任务拆解为依次检索每个指数。每个指数最多搜索1-2次，第一次请用短关键词（例如: 标普500 行情 / KOSPI 行情 / 日经225 行情 / 纳斯达克 行情 / 上证指数 行情），若搜索结果中出现东方财富、新浪财经、英为财情等行情页面，即视为已获得该指数的有效行情信息，立即进入下一个指数，不要重复搜索同一主题，也不要为了追求精确点位反复重试。全部指数检索完毕后，请立即停止调用工具，用 Markdown 表格输出一份最终汇总报告，包含每个指数的走势、振幅、换手、盘内异动等信息（可注明数据为搜索结果快照，实时点位以链接页面为准），不要再调用任何工具。"
+  let chat_path = "/api/chat?agent_id=" + @lib.url_encode(agent_id) +
+    "&message=" + @lib.url_encode(guided_message)
+  handle_chat_sse(ctx, chat_path, conn)
 }
 
 /// Handle PUT /api/tasks - update task status

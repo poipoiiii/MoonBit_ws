@@ -1,0 +1,2 @@
+id,name,description,agent_id,created_at
+st_001,市场行情总览,帮我查阅大A、KOSPI、日经、纳斯达克、标普等最近的走势、振幅、换手和盘内异动信息，并汇总成一份简明报告,agent_005,2026-08-03 10:00:00

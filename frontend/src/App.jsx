@@ -2,9 +2,12 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   Zap, MemoryStick, Cpu, Settings, Square, Play,
   Terminal, Send, CircleDot, Loader2, WifiOff,
-  Sun, Moon, X, Info, Bot
+  Sun, Moon, X, Info, Bot, Plus, Trash2
 } from 'lucide-react'
-import { fetchAgents, fetchTools, fetchRuntime, createChatStream } from './api'
+import {
+  fetchAgents, fetchTools, fetchRuntime, fetchSuperTasks,
+  createChatStream, createSuperTask, deleteSuperTask, runSuperTaskStream
+} from './api'
 import { useTheme } from './ThemeContext'
 import MarkdownMessage from './components/MarkdownMessage'
 
@@ -65,6 +68,10 @@ function App() {
   const [tools, setTools] = useState([])
   const [logs, setLogs] = useState([])
   const [input, setInput] = useState('')
+  const [superTasks, setSuperTasks] = useState([])
+  const [showCreateTask, setShowCreateTask] = useState(false)
+  const [taskName, setTaskName] = useState('')
+  const [taskDesc, setTaskDesc] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [connecting, setConnecting] = useState(true)
   const [agentStatuses, setAgentStatuses] = useState({})
@@ -89,14 +96,16 @@ function App() {
     const load = async () => {
       try {
         setConnecting(true)
-        const [agentData, toolData] = await Promise.all([
+        const [agentData, toolData, superTaskData] = await Promise.all([
           fetchAgents(),
           fetchTools(),
+          fetchSuperTasks(),
         ])
         if (cancelled) return
 
         setAgents(agentData)
         setTools(toolData)
+        setSuperTasks(superTaskData.sort((a, b) => a.id.localeCompare(b.id)))
 
         const statuses = {}
         agentData.forEach(a => { statuses[a.id] = 'idle' })
@@ -108,7 +117,7 @@ function App() {
 
         setLogs([
           { type: 'sys', text: `[System] MoonBit Runtime connected` },
-          { type: 'sys', text: `[System] Loaded ${agentData.length} agents, ${toolData.length} tools` },
+          { type: 'sys', text: `[System] Loaded ${agentData.length} agents, ${toolData.length} tools, ${superTaskData.length} super tasks` },
         ])
       } catch (err) {
         if (!cancelled) {
@@ -159,45 +168,99 @@ function App() {
     if (!isStreaming) inputRef.current?.focus()
   }, [isStreaming])
 
+  /* ── Stream helpers ── */
+  const appendStreamed = useCallback((logId, text) => {
+    setLogs(prev => {
+      const updated = [...prev]
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].id === logId) {
+          updated[i] = { ...updated[i], text: updated[i].text + text }
+          break
+        }
+      }
+      return updated
+    })
+  }, [])
+
+  const startStream = useCallback((userTag) => {
+    setLogs(prev => [...prev, { type: 'user', text: `> ${userTag}` }])
+    setIsStreaming(true)
+    const logId = `resp-${Date.now()}`
+    setLogs(prev => [...prev, { type: 'agent', text: '', id: logId }])
+    return logId
+  }, [])
+
+  const finishStream = useCallback(() => {
+    setLogs(prev => [...prev, { type: 'sys', text: `[Runtime] Response complete` }])
+    setIsStreaming(false)
+  }, [])
+
+  const failStream = useCallback((logId, err) => {
+    setLogs(prev => {
+      const filtered = prev.filter(l => l.id !== logId)
+      return [...filtered, { type: 'sys', text: `[Error] ${err.message}` }]
+    })
+    setIsStreaming(false)
+  }, [])
+
   /* ── Send message ── */
   const handleSend = useCallback(() => {
     if (!input.trim() || !selectedAgent || isStreaming) return
     const userMsg = input.trim()
-
-    setLogs(prev => [...prev, { type: 'user', text: `> ${userMsg}` }])
     setInput('')
-    setIsStreaming(true)
-
-    const logId = `resp-${Date.now()}`
-    setLogs(prev => [...prev, { type: 'agent', text: '', id: logId }])
-
+    const logId = startStream(userMsg)
     const controller = createChatStream(selectedAgent.id, userMsg, {
-      onData: (text) => {
-        setLogs(prev => {
-          const updated = [...prev]
-          for (let i = updated.length - 1; i >= 0; i--) {
-            if (updated[i].id === logId) {
-              updated[i] = { ...updated[i], text: updated[i].text + text }
-              break
-            }
-          }
-          return updated
-        })
-      },
-      onDone: () => {
-        setLogs(prev => [...prev, { type: 'sys', text: `[Runtime] Response complete` }])
-        setIsStreaming(false)
-      },
-      onError: (err) => {
-        setLogs(prev => {
-          const filtered = prev.filter(l => l.id !== logId)
-          return [...filtered, { type: 'sys', text: `[Error] ${err.message}` }]
-        })
-        setIsStreaming(false)
-      },
+      onData: (text) => appendStreamed(logId, text),
+      onDone: finishStream,
+      onError: (err) => failStream(logId, err),
     })
     abortRef.current = controller
-  }, [input, selectedAgent, isStreaming])
+  }, [input, selectedAgent, isStreaming, startStream, appendStreamed, finishStream, failStream])
+
+  /* ── Run a super task (agent autonomously calls tools to complete it) ── */
+  const handleRunSuperTask = useCallback((st) => {
+    if (isStreaming) return
+    const agent = agents.find(a => a.id === st.agent_id) || selectedAgent
+    if (!agent) {
+      setLogs(prev => [...prev, { type: 'sys', text: `[Error] No agent found for task "${st.name}"` }])
+      return
+    }
+    const logId = startStream(`[超级任务] ${st.name}`)
+    const controller = runSuperTaskStream(st.id, agent.id, {
+      onData: (text) => appendStreamed(logId, text),
+      onDone: finishStream,
+      onError: (err) => failStream(logId, err),
+    })
+    abortRef.current = controller
+  }, [agents, selectedAgent, isStreaming, startStream, appendStreamed, finishStream, failStream])
+
+  /* ── Create a custom super task ── */
+  const handleCreateSuperTask = async () => {
+    const name = taskName.trim()
+    const desc = taskDesc.trim()
+    if (!name || !desc) return
+    try {
+      const created = await createSuperTask({ name, description: desc })
+      setSuperTasks(prev => [...prev, created].sort((a, b) => a.id.localeCompare(b.id)))
+      setShowCreateTask(false)
+      setTaskName('')
+      setTaskDesc('')
+      setLogs(prev => [...prev, { type: 'sys', text: `[System] Super task "${created.name}" created (${created.id})` }])
+    } catch (err) {
+      setLogs(prev => [...prev, { type: 'sys', text: `[Error] ${err.message}` }])
+    }
+  }
+
+  /* ── Delete a custom super task ── */
+  const handleDeleteSuperTask = async (id) => {
+    try {
+      await deleteSuperTask(id)
+      setSuperTasks(prev => prev.filter(t => t.id !== id))
+      setLogs(prev => [...prev, { type: 'sys', text: `[System] Super task ${id} deleted` }])
+    } catch (err) {
+      setLogs(prev => [...prev, { type: 'sys', text: `[Error] ${err.message}` }])
+    }
+  }
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -323,6 +386,63 @@ function App() {
               <span className="text-xs" style={{ color: 'var(--text-dim)' }}>No agents available</span>
             </div>
           )}
+
+          {/* Super Tasks */}
+          <div className="mt-6">
+            <div className="flex items-center justify-between px-2 mb-2">
+              <span className="text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'var(--text-dim)' }}>
+                Super Tasks ({superTasks.length})
+              </span>
+              <button
+                onClick={() => setShowCreateTask(true)}
+                className="p-1 rounded transition-colors hover-bg hover-text"
+                style={{ color: 'var(--text-dim)' }}
+                title="创建自定义超级任务"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="space-y-1">
+              {superTasks.map(st => (
+                <div
+                  key={st.id}
+                  className="px-3 py-2.5 rounded-lg border group"
+                  style={{ borderColor: 'var(--border-subtle)', backgroundColor: 'var(--bg-elevated)' }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium truncate" style={{ color: 'var(--text-heading)' }}>{st.name}</span>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {st.id !== 'st_001' && (
+                        <button
+                          onClick={() => handleDeleteSuperTask(st.id)}
+                          className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover-bg hover-text"
+                          style={{ color: 'var(--text-dim)' }}
+                          title="删除"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleRunSuperTask(st)}
+                        disabled={isStreaming}
+                        className="p-1 rounded transition-colors hover-bg disabled:opacity-30 disabled:cursor-not-allowed"
+                        style={{ color: isStreaming ? 'var(--text-dimmer)' : '#34d399' }}
+                        title="执行"
+                      >
+                        <Play className="w-3 h-3" fill="currentColor" />
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-[10px] leading-relaxed mt-1 line-clamp-2" style={{ color: 'var(--text-dim)' }}>
+                    {st.description}
+                  </p>
+                </div>
+              ))}
+              {superTasks.length === 0 && (
+                <p className="text-[10px] px-2" style={{ color: 'var(--text-dimmer)' }}>No super tasks yet</p>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Runtime Monitor */}
@@ -611,6 +731,90 @@ function App() {
                 style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-heading)' }}
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================
+          Create Super Task Modal
+      ======================================== */}
+      {showCreateTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center animate-modal" style={{ backgroundColor: 'var(--overlay-bg)' }}>
+          <div className="rounded-xl w-full max-w-lg mx-4 animate-modal" style={{
+            backgroundColor: 'var(--bg-panel)',
+            border: '1px solid var(--border-subtle)',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+          }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+              <h3 className="font-semibold text-sm flex items-center gap-2" style={{ color: 'var(--text-heading)' }}>
+                <Zap className="w-4 h-4" style={{ color: '#34d399' }} /> 新建超级任务
+              </h3>
+              <button
+                onClick={() => setShowCreateTask(false)}
+                className="p-1 rounded-lg hover-bg hover-text transition-colors"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-sm">
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>
+                  任务名称
+                </label>
+                <input
+                  type="text"
+                  value={taskName}
+                  onChange={(e) => setTaskName(e.target.value)}
+                  placeholder="例如: 市场行情总览"
+                  className="mt-1.5 w-full px-3 py-2 rounded-lg outline-none text-sm font-mono"
+                  style={{
+                    backgroundColor: 'var(--bg-deep)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-heading)',
+                  }}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-dim)' }}>
+                  任务描述
+                </label>
+                <textarea
+                  value={taskDesc}
+                  onChange={(e) => setTaskDesc(e.target.value)}
+                  rows={5}
+                  placeholder={'描述要执行的复杂任务，agent 会自主调用工具完成。\n例如: 帮我查阅大A、KOSPI、日经、纳斯达克、标普等最近的走势、振幅、换手和盘内异动信息，并汇总成一份简明报告'}
+                  className="mt-1.5 w-full px-3 py-2 rounded-lg outline-none text-sm font-mono resize-none"
+                  style={{
+                    backgroundColor: 'var(--bg-deep)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-heading)',
+                  }}
+                />
+              </div>
+              <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-dimmer)' }}>
+                执行时将以任务描述作为指令发送给 ToolCaller Agent，它会按需调用搜索等工具逐步完成并汇总报告。
+              </p>
+            </div>
+
+            <div className="border-t px-5 py-3 flex justify-end gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
+              <button
+                onClick={() => setShowCreateTask(false)}
+                className="text-xs px-4 py-2 rounded-lg transition-colors hover-bg"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-heading)' }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreateSuperTask}
+                disabled={!taskName.trim() || !taskDesc.trim()}
+                className="text-xs px-4 py-2 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: '#34d399' }}
+              >
+                创建并保存
               </button>
             </div>
           </div>
