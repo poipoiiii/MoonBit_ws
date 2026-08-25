@@ -1,5 +1,5 @@
 import {
-  "username/agent-runtime/lib",
+  "poipoiiii/agent-runtime/lib",
   "moonbitlang/async",
   "moonbitlang/async/http",
   "moonbitlang/async/io",
@@ -8,6 +8,5 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/core/encoding/utf8",
 }
-options(
-  "is-main": true,
-)
+
+pkgtype(kind: "executable")

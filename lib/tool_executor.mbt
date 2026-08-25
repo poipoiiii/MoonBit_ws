@@ -2,8 +2,13 @@
 /// Tool executor - execute tool calls from AI responses
 /// Supports: calc_expression, read_file, write_file, search_web, analyze_csv
 
+///|
 /// Execute a tool call and return the result
-pub async fn execute_tool(tool_name : String, args_json : String, data_dir : String) -> String {
+pub async fn execute_tool(
+  tool_name : String,
+  args_json : String,
+  data_dir : String,
+) -> String {
   match tool_name {
     "calc_expression" => execute_calc(args_json)
     "search_web" => execute_search(args_json)
@@ -14,9 +19,10 @@ pub async fn execute_tool(tool_name : String, args_json : String, data_dir : Str
   }
 }
 
+///|
 /// Extract a string value from JSON by key (simple parser, handles both
 /// `"key": "value"` and `"key":"value"` formats)
-fn extract_str(json : String, key : String) -> Option[String] {
+fn extract_str(json : String, key : String) -> String? {
   let search1 = "\"" + key + "\": \""
   let search2 = "\"" + key + "\":\""
   let start = match string_find(json, search1) {
@@ -26,7 +32,11 @@ fn extract_str(json : String, key : String) -> Option[String] {
   match start {
     None => None
     Some(s) => {
-      let search = if string_find(json, search1) is Some(_) { search1 } else { search2 }
+      let search = if string_find(json, search1) is Some(_) {
+        search1
+      } else {
+        search2
+      }
       let value_start = s + search.length()
       let mut result = ""
       let mut i = value_start
@@ -35,15 +45,32 @@ fn extract_str(json : String, key : String) -> Option[String] {
         if ch == '\\' {
           if i + 1 < json.length() {
             let next = json[i + 1]
-            if next == '"' { result = result + "\""; i = i + 2 }
-            else if next == 'n' { result = result + "\n"; i = i + 2 }
-            else if next == '\\' { result = result + "\\"; i = i + 2 }
-            else { match ch.to_char() { Some(c) => result = result + c.to_string(); None => () }; i = i + 1 }
-          } else { i = i + 1 }
+            if next == '"' {
+              result = result + "\""
+              i = i + 2
+            } else if next == 'n' {
+              result = result + "\n"
+              i = i + 2
+            } else if next == '\\' {
+              result = result + "\\"
+              i = i + 2
+            } else {
+              match ch.to_char() {
+                Some(c) => result = result + c.to_string()
+                None => ()
+              }
+              i = i + 1
+            }
+          } else {
+            i = i + 1
+          }
         } else if ch == '"' {
           break
         } else {
-          match ch.to_char() { Some(c) => result = result + c.to_string(); None => () }
+          match ch.to_char() {
+            Some(c) => result = result + c.to_string()
+            None => ()
+          }
           i = i + 1
         }
       }
@@ -52,6 +79,7 @@ fn extract_str(json : String, key : String) -> Option[String] {
   }
 }
 
+///|
 /// Extract a path string from JSON (handles both "path" and "file_path" keys)
 fn extract_path(json : String) -> String {
   match extract_str(json, "file_path") {
@@ -60,6 +88,7 @@ fn extract_path(json : String) -> String {
   }
 }
 
+///|
 /// Execute calc_expression - evaluate basic arithmetic expression using integer math
 fn execute_calc(args : String) -> String {
   let expr = extract_str(args, "expression").unwrap_or(args)
@@ -94,12 +123,19 @@ fn execute_calc(args : String) -> String {
       }
       // Apply operator with the parsed number
       match op {
-        '+' => { result_int = result_int + num_int; result_frac = result_frac * num_div + num_frac * result_div; result_div = result_div * num_div }
-        '-' => { result_int = result_int - num_int; result_frac = result_frac * num_div - num_frac * result_div; result_div = result_div * num_div }
-        '*' => {
+        '+' => {
+          result_int = result_int + num_int
+          result_frac = result_frac * num_div + num_frac * result_div
+          result_div = result_div * num_div
+        }
+        '-' => {
+          result_int = result_int - num_int
+          result_frac = result_frac * num_div - num_frac * result_div
+          result_div = result_div * num_div
+        }
+        '*' =>
           // Simple multiplication (may overflow for complex cases)
           result_int = result_int * num_int
-        }
         '/' => if num_int != 0 { result_int = result_int / num_int }
         _ => ()
       }
@@ -110,10 +146,12 @@ fn execute_calc(args : String) -> String {
       i = i + 1
     }
   }
-  let result = Float::from_int(result_int) + Float::from_int(result_frac) / Float::from_int(result_div)
+  let result = Float::from_int(result_int) +
+    Float::from_int(result_frac) / Float::from_int(result_div)
   "计算结果: " + result.to_string()
 }
 
+///|
 /// Extract the "query" argument from tool-call arguments, tolerating the
 /// wrappers the model sometimes emits when it issues parallel tool calls,
 /// e.g. {"arguments": "{\"query\": ...}"} or deeply nested {"arguments":
@@ -125,15 +163,19 @@ fn extract_search_query(args : String) -> String {
   while depth < 12 {
     match extract_str(current, "query") {
       Some(q) => {
-        let t = q.trim(chars=" \t\r\n").to_string()
-        if t.length() > 0 { return t }
+        let t = q.trim(chars=" \t\r\n").to_owned()
+        if t.length() > 0 {
+          return t
+        }
       }
       None => ()
     }
     match extract_str(current, "arguments") {
       Some(inner) => {
-        let t = inner.trim(chars=" \t\r\n").to_string()
-        if t.length() == 0 { break }
+        let t = inner.trim(chars=" \t\r\n").to_owned()
+        if t.length() == 0 {
+          break
+        }
         current = t
         depth = depth + 1
       }
@@ -141,29 +183,37 @@ fn extract_search_query(args : String) -> String {
     }
   }
   // Fall back to the raw args only when it is not a JSON object
-  let trimmed = args.trim(chars=" \t\r\n").to_string()
-  if trimmed.length() > 0 && trimmed[0].to_int() == 123 { "" } else { trimmed }
+  let trimmed = args.trim(chars=" \t\r\n").to_owned()
+  if trimmed.length() > 0 && trimmed[0].to_int() == 123 {
+    ""
+  } else {
+    trimmed
+  }
 }
 
+///|
 /// Execute search_web - real web search via Bing RSS
 async fn execute_search(args : String) -> String {
   let query = extract_search_query(args)
   if query.length() == 0 {
-    return "错误: search_web 未收到有效的 query 参数 (收到: " + args + ")，请提供具体的搜索关键词后重试"
+    return "错误: search_web 未收到有效的 query 参数 (收到: " +
+      args +
+      ")，请提供具体的搜索关键词后重试"
   }
   let cleaned_query = sanitize_query(query)
-  let url = "https://www.bing.com/search?format=rss&q=" + url_encode(cleaned_query)
+  let url = "https://www.bing.com/search?format=rss&q=" +
+    url_encode(cleaned_query)
   let headers = Map([
-    ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+    (
+      "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ),
     ("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8"),
   ])
   // Retry once if the connection drops mid-read (Bing occasionally closes the
   // connection on repeated requests, raising ReaderClosed).
   let mut attempt = 0
   while attempt < 2 {
-    let result = try {
-      do_search(cleaned_query, url, headers)
-    } catch {
+    let result = do_search(cleaned_query, url, headers) catch {
       e => "错误: 搜索连接异常: " + e.to_string()
     }
     if result.has_prefix("错误: 搜索连接异常:") {
@@ -172,13 +222,22 @@ async fn execute_search(args : String) -> String {
       return result
     }
   }
-  "错误: 搜索连接异常: 两次尝试均失败, query=[" + cleaned_query + "], url=" + url
+  "错误: 搜索连接异常: 两次尝试均失败, query=[" +
+  cleaned_query +
+  "], url=" +
+  url
 }
 
+///|
 /// Perform one Bing RSS search request and format the results.
-async fn do_search(cleaned_query : String, url : String, headers : Map[String, String]) -> String {
+async fn do_search(
+  cleaned_query : String,
+  url : String,
+  headers : Map[String, String],
+) -> String {
   // Request with a timeout; the http client does not follow redirects automatically
-  let request_result = match @async.with_timeout_opt(15000, () => @http.get(url, headers=headers)) {
+  let request_result = match
+    @async.with_timeout_opt(15000, () => @http.get(url, headers~)) {
     Some(result) => result
     None => return "错误: 搜索请求超时(15秒)"
   }
@@ -186,12 +245,22 @@ async fn do_search(cleaned_query : String, url : String, headers : Map[String, S
   let mut body = request_result.1
   // Follow up to 3 redirects manually (e.g. www.bing.com -> cn.bing.com)
   let mut redirects = 0
-  while redirects < 3 && (response.code == 301 || response.code == 302 || response.code == 303 || response.code == 307) {
+  while redirects < 3 &&
+        (
+          response.code == 301 ||
+          response.code == 302 ||
+          response.code == 303 ||
+          response.code == 307
+        ) {
     match response.headers.get("location") {
       None => break
       Some(loc) => {
-        let next_url = if loc.has_prefix("http") { loc } else { "https://www.bing.com" + loc }
-        let result = @http.get(next_url, headers=headers)
+        let next_url = if loc.has_prefix("http") {
+          loc
+        } else {
+          "https://www.bing.com" + loc
+        }
+        let result = @http.get(next_url, headers~)
         response = result.0
         body = result.1
         redirects = redirects + 1
@@ -199,7 +268,12 @@ async fn do_search(cleaned_query : String, url : String, headers : Map[String, S
     }
   }
   if response.code != 200 {
-    return "错误: 搜索请求失败, HTTP 状态码 " + response.code.to_string() + ", query=[" + cleaned_query + "], url=" + url
+    return "错误: 搜索请求失败, HTTP 状态码 " +
+      response.code.to_string() +
+      ", query=[" +
+      cleaned_query +
+      "], url=" +
+      url
   }
   let xml = body.text() catch {
     _ => return "错误: 无法解码搜索结果页面"
@@ -207,13 +281,20 @@ async fn do_search(cleaned_query : String, url : String, headers : Map[String, S
   parse_bing_rss(xml, cleaned_query)
 }
 
+///|
 /// Percent-encode a string for use in a URL query (UTF-8 safe)
 pub fn url_encode(s : String) -> String {
   let mut result = ""
   let mut i = 0
   while i < s.length() {
     let cp = s[i].to_int()
-    if (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122) || cp == 45 || cp == 95 || cp == 46 || cp == 126 {
+    if (cp >= 48 && cp <= 57) ||
+      (cp >= 65 && cp <= 90) ||
+      (cp >= 97 && cp <= 122) ||
+      cp == 45 ||
+      cp == 95 ||
+      cp == 46 ||
+      cp == 126 {
       match s[i].to_char() {
         Some(c) => result = result + c.to_string()
         None => ()
@@ -234,6 +315,7 @@ pub fn url_encode(s : String) -> String {
   result
 }
 
+///|
 /// Encode a Unicode code point into its UTF-8 byte sequence
 fn utf8_bytes(cp : Int) -> Array[Byte] {
   if cp <= 0x7F {
@@ -241,17 +323,32 @@ fn utf8_bytes(cp : Int) -> Array[Byte] {
   } else if cp <= 0x7FF {
     [(0xC0 | (cp >> 6)).to_byte(), (0x80 | (cp & 0x3F)).to_byte()]
   } else if cp <= 0xFFFF {
-    [(0xE0 | (cp >> 12)).to_byte(), (0x80 | ((cp >> 6) & 0x3F)).to_byte(), (0x80 | (cp & 0x3F)).to_byte()]
+    [
+      (0xE0 | (cp >> 12)).to_byte(),
+      (0x80 | ((cp >> 6) & 0x3F)).to_byte(),
+      (0x80 | (cp & 0x3F)).to_byte(),
+    ]
   } else {
-    [(0xF0 | (cp >> 18)).to_byte(), (0x80 | ((cp >> 12) & 0x3F)).to_byte(), (0x80 | ((cp >> 6) & 0x3F)).to_byte(), (0x80 | (cp & 0x3F)).to_byte()]
+    [
+      (0xF0 | (cp >> 18)).to_byte(),
+      (0x80 | ((cp >> 12) & 0x3F)).to_byte(),
+      (0x80 | ((cp >> 6) & 0x3F)).to_byte(),
+      (0x80 | (cp & 0x3F)).to_byte(),
+    ]
   }
 }
 
+///|
 /// Convert a nibble (0-15) to its uppercase hex character ('0'-'9', 'A'-'F')
 fn hex_nibble(n : Int) -> String {
-  if n < 10 { Int::unsafe_to_char(48 + n).to_string() } else { Int::unsafe_to_char(55 + n).to_string() }
+  if n < 10 {
+    Int::unsafe_to_char(48 + n).to_string()
+  } else {
+    Int::unsafe_to_char(55 + n).to_string()
+  }
 }
 
+///|
 /// Collapse whitespace control characters (\n \r \t and runs of spaces) into a single space.
 /// Bing's RSS endpoint rejects queries containing line breaks with HTTP 400.
 fn sanitize_query(s : String) -> String {
@@ -277,12 +374,13 @@ fn sanitize_query(s : String) -> String {
   if result.length() > 0 && result[0] == ' ' {
     result = result[1:].to_owned()
   }
-  if result.length() > 0 && result[result.length()-1] == ' ' {
-    result = result[:result.length()-1].to_owned()
+  if result.length() > 0 && result[result.length() - 1] == ' ' {
+    result = result[:result.length() - 1].to_owned()
   }
   result
 }
 
+///|
 /// Parse Bing RSS search result XML into a readable text list
 fn parse_bing_rss(xml : String, query : String) -> String {
   let results : Array[String] = []
@@ -296,19 +394,25 @@ fn parse_bing_rss(xml : String, query : String) -> String {
       Some(pos) => pos
       None => xml.length()
     }
-    let item = xml[item_start : item_end].to_owned()
+    let item = xml[item_start:item_end].to_owned()
     let title = extract_xml_tag(item, "title")
     let link = extract_xml_tag(item, "link")
     if title.length() > 0 && link.length() > 0 {
       let description = extract_xml_tag(item, "description")
-      results.push("标题: " + title + "\n链接: " + link + "\n摘要: " + description)
+      results.push(
+        "标题: " + title + "\n链接: " + link + "\n摘要: " + description,
+      )
     }
     search_from = item_end
   }
   if results.length() == 0 {
     return "搜索结果: 未找到与\"\{query}\"相关的网页"
   }
-  let mut output = "搜索结果 (\"" + query + "\", " + results.length().to_string() + " 条):"
+  let mut output = "搜索结果 (\"" +
+    query +
+    "\", " +
+    results.length().to_string() +
+    " 条):"
   if !results_relevant(results, query) {
     output = output +
       "\n\n提示: 以上搜索结果似乎与该主题不相关（结果中未出现查询关键词），请改用更短更通用的关键词重新搜索，例如直接使用指数名称或代码（如: 标普500 行情 / SPX / KS11）。"
@@ -321,6 +425,7 @@ fn parse_bing_rss(xml : String, query : String) -> String {
   output
 }
 
+///|
 /// Whether any search result title contains a meaningful key term from the query
 /// (e.g. "标普" or "KOSPI"). Bing's RSS sometimes tokenizes a Chinese query so
 /// badly that it returns pages about a single character; flagging that lets the
@@ -330,15 +435,20 @@ fn results_relevant(results : Array[String], query : String) -> Bool {
   let en_term = extract_en_term(query)
   for r in results {
     if en_term.length() >= 3 {
-      if string_find(r, en_term) is Some(_) { return true }
+      if string_find(r, en_term) is Some(_) {
+        return true
+      }
     }
     for t in cjk_terms {
-      if string_find(r, t) is Some(_) { return true }
+      if string_find(r, t) is Some(_) {
+        return true
+      }
     }
   }
   false
 }
 
+///|
 /// Extract runs of 2+ consecutive CJK characters from a string (e.g. "标普")
 fn extract_cjk_terms(s : String) -> Array[String] {
   let terms : Array[String] = []
@@ -356,12 +466,17 @@ fn extract_cjk_terms(s : String) -> Array[String] {
         }
       }
       if j - i >= 2 {
-        let seg = s[i : j].to_owned()
+        let seg = s[i:j].to_owned()
         let mut dup = false
         for t in terms {
-          if t == seg { dup = true; break }
+          if t == seg {
+            dup = true
+            break
+          }
         }
-        if !dup { terms.push(seg) }
+        if !dup {
+          terms.push(seg)
+        }
       }
       i = j
     } else {
@@ -371,6 +486,7 @@ fn extract_cjk_terms(s : String) -> Array[String] {
   terms
 }
 
+///|
 /// Extract the longest run of 3+ ASCII letters/digits from a string (e.g. "KOSPI")
 fn extract_en_term(s : String) -> String {
   let mut best = ""
@@ -378,22 +494,29 @@ fn extract_en_term(s : String) -> String {
   let mut i = 0
   while i < s.length() {
     let cp = s[i].to_int()
-    let is_alnum = (cp >= 48 && cp <= 57) || (cp >= 65 && cp <= 90) || (cp >= 97 && cp <= 122)
+    let is_alnum = (cp >= 48 && cp <= 57) ||
+      (cp >= 65 && cp <= 90) ||
+      (cp >= 97 && cp <= 122)
     if is_alnum {
       match s[i].to_char() {
         Some(c) => cur = cur + c.to_string()
         None => ()
       }
     } else {
-      if cur.length() >= 3 && cur.length() > best.length() { best = cur }
+      if cur.length() >= 3 && cur.length() > best.length() {
+        best = cur
+      }
       cur = ""
     }
     i = i + 1
   }
-  if cur.length() >= 3 && cur.length() > best.length() { best = cur }
+  if cur.length() >= 3 && cur.length() > best.length() {
+    best = cur
+  }
   best
 }
 
+///|
 /// Extract the text content of a single XML tag like <title>...</title>
 fn extract_xml_tag(xml : String, tag : String) -> String {
   let open = "<" + tag + ">"
@@ -406,10 +529,13 @@ fn extract_xml_tag(xml : String, tag : String) -> String {
     None => return ""
     Some(pos) => pos
   }
-  if end <= start { return "" }
-  strip_tags(decode_html_entities(xml[start : end].to_owned()))
+  if end <= start {
+    return ""
+  }
+  strip_tags(decode_html_entities(xml[start:end].to_owned()))
 }
 
+///|
 /// Remove HTML tags from a string and trim surrounding whitespace
 fn strip_tags(s : String) -> String {
   let mut result = ""
@@ -429,9 +555,10 @@ fn strip_tags(s : String) -> String {
     }
     i = i + 1
   }
-  result.trim(chars=" \t\r\n").to_string()
+  result.trim(chars=" \t\r\n").to_owned()
 }
 
+///|
 /// Decode common HTML/XML entities (named and numeric)
 fn decode_html_entities(s : String) -> String {
   let mut result = ""
@@ -441,14 +568,32 @@ fn decode_html_entities(s : String) -> String {
     if c == 38 { // '&'
       let semi = string_find_from(s, ";", i)
       if semi is Some(end) && end - i <= 12 {
-        let entity = s[i + 1 : end].to_owned()
+        let entity = s[i + 1:end].to_owned()
         match entity {
-          "amp" => { result = result + "&"; i = end + 1 }
-          "lt" => { result = result + "<"; i = end + 1 }
-          "gt" => { result = result + ">"; i = end + 1 }
-          "quot" => { result = result + "\""; i = end + 1 }
-          "apos" => { result = result + "'"; i = end + 1 }
-          "nbsp" | "ensp" | "emsp" | "thinsp" => { result = result + " "; i = end + 1 }
+          "amp" => {
+            result = result + "&"
+            i = end + 1
+          }
+          "lt" => {
+            result = result + "<"
+            i = end + 1
+          }
+          "gt" => {
+            result = result + ">"
+            i = end + 1
+          }
+          "quot" => {
+            result = result + "\""
+            i = end + 1
+          }
+          "apos" => {
+            result = result + "'"
+            i = end + 1
+          }
+          "nbsp" | "ensp" | "emsp" | "thinsp" => {
+            result = result + " "
+            i = end + 1
+          }
           _ =>
             if entity.length() > 0 && entity[0].to_int() == 35 { // '#' numeric entity
               let code = parse_entity_number(entity[1:].to_owned())
@@ -488,9 +633,12 @@ fn decode_html_entities(s : String) -> String {
   result
 }
 
+///|
 /// Parse a numeric HTML entity like "123" or "x1F600" (without the leading #)
 fn parse_entity_number(num_str : String) -> Int {
-  if num_str.length() == 0 { return -1 }
+  if num_str.length() == 0 {
+    return -1
+  }
   let mut is_hex = false
   let mut i = 0
   let first = num_str[0].to_int()
@@ -514,27 +662,40 @@ fn parse_entity_number(num_str : String) -> Int {
     }
     i = i + 1
   }
-  if ok { code } else { -1 }
+  if ok {
+    code
+  } else {
+    -1
+  }
 }
 
+///|
 /// Find the first occurrence of a pattern starting from a given byte index
-fn string_find_from(s : String, pat : String, from : Int) -> Option[Int] {
-  if pat.length() == 0 { return Some(from) }
+fn string_find_from(s : String, pat : String, from : Int) -> Int? {
+  if pat.length() == 0 {
+    return Some(from)
+  }
   let max_start = s.length() - pat.length()
   let mut i = if from < 0 { 0 } else { from }
   while i <= max_start {
     let mut matched = true
     let mut j = 0
     while j < pat.length() {
-      if s[i + j] != pat[j] { matched = false; break }
+      if s[i + j] != pat[j] {
+        matched = false
+        break
+      }
       j = j + 1
     }
-    if matched { return Some(i) }
+    if matched {
+      return Some(i)
+    }
     i = i + 1
   }
   None
 }
 
+///|
 /// Execute read_file - read local file content
 async fn execute_read_file(args : String) -> String {
   let path = extract_str(args, "path").unwrap_or(args)
@@ -551,6 +712,7 @@ async fn execute_read_file(args : String) -> String {
   "文件内容 (" + path + "):\n" + content
 }
 
+///|
 /// Execute write_file - write content to local file
 async fn execute_write_file(args : String, data_dir : String) -> String {
   let path = extract_str(args, "path").unwrap_or("output.txt")
@@ -559,9 +721,14 @@ async fn execute_write_file(args : String, data_dir : String) -> String {
   @fs.write_file(full_path, content, create_mode=@fs.CreateOrTruncate) catch {
     _ => return "Error: Cannot write file: \{full_path}"
   }
-  "文件已写入: " + full_path + " (大小: " + content.length().to_string() + " 字符)"
+  "文件已写入: " +
+  full_path +
+  " (大小: " +
+  content.length().to_string() +
+  " 字符)"
 }
 
+///|
 /// Execute analyze_csv - parse and analyze CSV file
 async fn execute_analyze_csv(args : String, data_dir : String) -> String {
   let file_path = extract_path(args)
@@ -571,7 +738,7 @@ async fn execute_analyze_csv(args : String, data_dir : String) -> String {
   } else {
     data_dir + "/" + file_path
   }
-  
+
   let file_result = @fs.open(full_path, mode=@fs.Mode::ReadOnly) catch {
     _ => return "Error: Cannot open file: \{full_path}"
   }
@@ -582,35 +749,55 @@ async fn execute_analyze_csv(args : String, data_dir : String) -> String {
   let content = data.text() catch {
     _ => return "Error: File is not valid UTF-8: \{full_path}"
   }
-  
+
   let lines_iter = content.split("\n")
   let lines : Array[String] = []
   for line_view in lines_iter {
     let line = line_view.to_owned()
-    if line.length() > 0 { lines.push(line) }
+    if line.length() > 0 {
+      lines.push(line)
+    }
   }
-  
+
   if lines.length() < 2 {
     return "CSV 文件为空或只有标题行"
   }
-  
+
   let num_rows = lines.length() - 1
   let num_cols = parse_csv_line(lines[0]).length()
-  
+
   match operation {
-    "summary" => "CSV 分析结果:\n- 文件: " + full_path + "\n- 列数: " + num_cols.to_string() + "\n- 数据行数: " + num_rows.to_string()
+    "summary" =>
+      "CSV 分析结果:\n- 文件: " +
+      full_path +
+      "\n- 列数: " +
+      num_cols.to_string() +
+      "\n- 数据行数: " +
+      num_rows.to_string()
     "columns" => {
       let header = parse_csv_line(lines[0])
-      "CSV 列名: [" + header.join(", ") + "] (" + num_cols.to_string() + " 列, " + num_rows.to_string() + " 行)"
+      "CSV 列名: [" +
+      header.join(", ") +
+      "] (" +
+      num_cols.to_string() +
+      " 列, " +
+      num_rows.to_string() +
+      " 行)"
     }
-    _ => "CSV 分析完成: " + num_rows.to_string() + " 行, " + num_cols.to_string() + " 列"
+    _ =>
+      "CSV 分析完成: " +
+      num_rows.to_string() +
+      " 行, " +
+      num_cols.to_string() +
+      " 列"
   }
 }
 
+///|
 /// Parse tool call from AI response - extract {"tool": "...", "args": {...}} pattern
-pub fn parse_tool_call(response : String) -> Option[(String, String)] {
+pub fn parse_tool_call(response : String) -> (String, String)? {
   let tool_prefix = "\"tool\": \""
-  
+
   let tool_start = string_find(response, tool_prefix)
   match tool_start {
     None => {
@@ -622,7 +809,11 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
           match string_find(response, tool_key) {
             None => None
             Some(pos) => {
-              let colon_pos = find_char_from(response, ':', pos + tool_key.length())
+              let colon_pos = find_char_from(
+                response,
+                ':',
+                pos + tool_key.length(),
+              )
               match colon_pos {
                 None => None
                 Some(cp) => {
@@ -634,20 +825,26 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
                       match quote2 {
                         None => None
                         Some(q2) => {
-                          let tool_name = response[q1 + 1 : q2].to_owned()
+                          let tool_name = response[q1 + 1:q2].to_owned()
                           let args_start = string_find(response, "\"args\":")
                           match args_start {
                             None => None
                             Some(asp) => {
-                              let brace_start = find_char_from(response, '{', asp + 7)
+                              let brace_start = find_char_from(
+                                response,
+                                '{',
+                                asp + 7,
+                              )
                               match brace_start {
                                 None => None
                                 Some(bs) => {
-                                  let args_end = find_matching_brace(response, bs)
+                                  let args_end = find_matching_brace(
+                                    response, bs,
+                                  )
                                   match args_end {
                                     None => None
                                     Some(ae) => {
-                                      let args_str = response[bs : ae + 1].to_owned()
+                                      let args_str = response[bs:ae + 1].to_owned()
                                       Some((tool_name, args_str))
                                     }
                                   }
@@ -670,7 +867,7 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
           match end_quote {
             None => None
             Some(eq) => {
-              let tool_name = response[start : eq].to_owned()
+              let tool_name = response[start:eq].to_owned()
               let args_start = string_find(response, "\"args\":")
               match args_start {
                 None => None
@@ -683,7 +880,7 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
                       match args_end {
                         None => None
                         Some(ae) => {
-                          let args_str = response[bs : ae + 1].to_owned()
+                          let args_str = response[bs:ae + 1].to_owned()
                           Some((tool_name, args_str))
                         }
                       }
@@ -702,7 +899,7 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
       match name_end {
         None => None
         Some(ne) => {
-          let tool_name = response[name_start : ne].to_owned()
+          let tool_name = response[name_start:ne].to_owned()
           // Find args JSON object
           let args_start = find_char_from(response, '{', ne)
           match args_start {
@@ -712,7 +909,7 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
               match end_brace {
                 None => None
                 Some(ae) => {
-                  let args_str = response[asp : ae + 1].to_owned()
+                  let args_str = response[asp:ae + 1].to_owned()
                   Some((tool_name, args_str))
                 }
               }
@@ -724,19 +921,25 @@ pub fn parse_tool_call(response : String) -> Option[(String, String)] {
   }
 }
 
+///|
 /// Find a character starting from position (ch is UInt16)
-fn find_char_from(s : String, ch : Int, start : Int) -> Option[Int] {
+fn find_char_from(s : String, ch : Int, start : Int) -> Int? {
   let mut i = start
   while i < s.length() {
-    if s[i].to_int() == ch { return Some(i) }
+    if s[i].to_int() == ch {
+      return Some(i)
+    }
     i = i + 1
   }
   None
 }
 
+///|
 /// Find matching closing brace for an opening brace at position
-fn find_matching_brace(s : String, open_pos : Int) -> Option[Int] {
-  if open_pos >= s.length() || s[open_pos] != '{' { return None }
+fn find_matching_brace(s : String, open_pos : Int) -> Int? {
+  if open_pos >= s.length() || s[open_pos] != '{' {
+    return None
+  }
   let mut depth = 1
   let mut i = open_pos + 1
   while i < s.length() {
@@ -745,14 +948,20 @@ fn find_matching_brace(s : String, open_pos : Int) -> Option[Int] {
       depth = depth + 1
     } else if ch == '}' {
       depth = depth - 1
-      if depth == 0 { return Some(i) }
+      if depth == 0 {
+        return Some(i)
+      }
     } else if ch == '"' {
       // Skip string literals
       i = i + 1
       while i < s.length() {
-        if s[i] == '\\' { i = i + 2 }
-        else if s[i] == '"' { break }
-        else { i = i + 1 }
+        if s[i] == '\\' {
+          i = i + 2
+        } else if s[i] == '"' {
+          break
+        } else {
+          i = i + 1
+        }
       }
     }
     i = i + 1

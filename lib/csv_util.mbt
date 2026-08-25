@@ -1,19 +1,23 @@
 ///|
 /// CSV utility functions for reading agent/task/tool data
 
+///|
 /// Read a CSV file and return rows as array of string arrays
 async fn read_csv(file_path : String) -> Result[Array[Array[String]], String] {
   let file = @fs.open(file_path, mode=@fs.Mode::ReadOnly) catch {
     _ => return Err("Cannot open file: \{file_path}")
   }
   let data = file.read_all() catch {
-    _ => { file.close(); return Err("Cannot read file: \{file_path}") }
+    _ => {
+      file.close()
+      return Err("Cannot read file: \{file_path}")
+    }
   }
   file.close()
   let content = data.text() catch {
     _ => return Err("Invalid UTF-8 in file: \{file_path}")
   }
-  
+
   // Split into lines and filter empty ones
   let lines_iter = content.split("\n")
   let lines : Array[String] = []
@@ -23,11 +27,11 @@ async fn read_csv(file_path : String) -> Result[Array[Array[String]], String] {
       lines.push(line)
     }
   }
-  
+
   if lines.length() < 2 {
     return Err("CSV file has no data rows")
   }
-  
+
   // Skip header row
   let rows : Array[Array[String]] = []
   let mut j = 1
@@ -35,10 +39,11 @@ async fn read_csv(file_path : String) -> Result[Array[Array[String]], String] {
     rows.push(parse_csv_line(lines[j]))
     j = j + 1
   }
-  
+
   Ok(rows)
 }
 
+///|
 /// Parse a single CSV line into fields (handles quoted fields)
 fn parse_csv_line(line : String) -> Array[String] {
   let fields : Array[String] = []
@@ -64,16 +69,19 @@ fn parse_csv_line(line : String) -> Array[String] {
   fields
 }
 
+///|
 /// Parse status string to TaskStatus
 pub fn parse_status(s : String) -> TaskStatus {
   match s {
     "completed" => Completed
     "running" => Running
+    "failed" => Failed("failed")
     "pending" => Pending
     _ => Pending
   }
 }
 
+///|
 /// Convert priority string to int
 fn priority_to_int(p : String) -> Int {
   match p {
@@ -84,13 +92,19 @@ fn priority_to_int(p : String) -> Int {
   }
 }
 
+///|
 /// Parse string to int, default to 0 on failure
 pub fn parse_int(s : String) -> Int {
   let mut result = 0
   let mut i = 0
   let mut neg = false
-  if s.length() == 0 { return 0 }
-  if s[0] == '-' { neg = true; i = 1 }
+  if s.length() == 0 {
+    return 0
+  }
+  if s[0] == '-' {
+    neg = true
+    i = 1
+  }
   while i < s.length() {
     let c = s[i]
     if c >= '0' && c <= '9' {
@@ -100,15 +114,21 @@ pub fn parse_int(s : String) -> Int {
     }
     i = i + 1
   }
-  if neg { -result } else { result }
+  if neg {
+    -result
+  } else {
+    result
+  }
 }
 
+///|
 /// Parse string to float, default to 0.0 on failure
 fn parse_float(s : String) -> Float {
   let result = parse_int(s)
   Float::from_int(result)
 }
 
+///|
 /// Load agents from CSV file
 /// Expected columns: id,name,model,instruction,system_prompt,max_tokens,temperature,tool_ids
 async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
@@ -117,7 +137,7 @@ async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
     Ok(r) => r
     Err(e) => return Err(e)
   }
-  
+
   let agents : Map[String, Agent] = Map([], capacity=rows.length())
   for row in rows {
     if row.length() >= 8 {
@@ -152,6 +172,7 @@ async fn load_agents(file_path : String) -> Result[Map[String, Agent], String] {
   Ok(agents)
 }
 
+///|
 /// Load tools from CSV file
 async fn load_tools(file_path : String) -> Result[Map[String, Tool], String] {
   let rows_result = read_csv(file_path)
@@ -159,11 +180,11 @@ async fn load_tools(file_path : String) -> Result[Map[String, Tool], String] {
     Ok(r) => r
     Err(e) => return Err(e)
   }
-  
+
   // Debug: count rows
   let row_count = rows.length()
   println("DEBUG load_tools: rows=" + row_count.to_string())
-  
+
   let tools : Map[String, Tool] = Map([], capacity=rows.length())
   for row in rows {
     let field_count = row.length()
@@ -171,7 +192,12 @@ async fn load_tools(file_path : String) -> Result[Map[String, Tool], String] {
       let enabled_val = row[4]
       let is_enabled = enabled_val == "true"
       // Debug: print raw field 4 content length
-      println("DEBUG tool: fields=" + field_count.to_string() + " enabled_raw_len=" + enabled_val.length().to_string())
+      println(
+        "DEBUG tool: fields=" +
+        field_count.to_string() +
+        " enabled_raw_len=" +
+        enabled_val.length().to_string(),
+      )
       let tool = Tool::{
         id: row[0],
         name: row[1],
@@ -185,12 +211,13 @@ async fn load_tools(file_path : String) -> Result[Map[String, Tool], String] {
       println("DEBUG tool: SKIP fields=" + field_count.to_string())
     }
   }
-  
+
   let loaded_count = tools.length()
   println("DEBUG load_tools: loaded=" + loaded_count.to_string())
   Ok(tools)
 }
 
+///|
 /// Load tasks from CSV file
 async fn load_tasks(file_path : String) -> Result[Map[String, Task], String] {
   let rows_result = read_csv(file_path)
@@ -198,7 +225,7 @@ async fn load_tasks(file_path : String) -> Result[Map[String, Task], String] {
     Ok(r) => r
     Err(e) => return Err(e)
   }
-  
+
   let tasks : Map[String, Task] = Map([], capacity=rows.length())
   for row in rows {
     if row.length() >= 8 {
@@ -207,7 +234,7 @@ async fn load_tasks(file_path : String) -> Result[Map[String, Task], String] {
         id: row[0],
         agent_id: row[1],
         description: row[2],
-        status: status,
+        status,
         priority: priority_to_int(row[4]),
         created_at: row[5],
         updated_at: row[6],
@@ -219,9 +246,13 @@ async fn load_tasks(file_path : String) -> Result[Map[String, Task], String] {
   Ok(tasks)
 }
 
+///|
 /// Escape a field for CSV output (wrap in quotes if contains comma, quote, or newline)
 fn csv_escape(s : String) -> String {
-  let needs_quoting = string_contains(s, ",") || string_contains(s, "\"") || string_contains(s, "\n") || string_contains(s, "\r")
+  let needs_quoting = string_contains(s, ",") ||
+    string_contains(s, "\"") ||
+    string_contains(s, "\n") ||
+    string_contains(s, "\r")
   if !needs_quoting {
     return s
   }
@@ -229,6 +260,7 @@ fn csv_escape(s : String) -> String {
   "\"" + escaped + "\""
 }
 
+///|
 /// Simple string replace (avoids labeled param issue with built-in replace)
 fn csv_replace(s : String, old : String, new : String) -> String {
   let mut result = ""
@@ -237,7 +269,10 @@ fn csv_replace(s : String, old : String, new : String) -> String {
     let mut matched = true
     let mut j = 0
     while j < old.length() && i + j < s.length() {
-      if s[i + j] != old[j] { matched = false; break }
+      if s[i + j] != old[j] {
+        matched = false
+        break
+      }
       j = j + 1
     }
     if matched && j == old.length() {
@@ -254,26 +289,38 @@ fn csv_replace(s : String, old : String, new : String) -> String {
   result
 }
 
+///|
 /// Simple string contains check
 fn string_contains(s : String, pat : String) -> Bool {
   let max_start = s.length() - pat.length()
-  if max_start < 0 { return false }
+  if max_start < 0 {
+    return false
+  }
   let mut i = 0
   while i <= max_start {
     let mut matched = true
     let mut j = 0
     while j < pat.length() {
-      if s[i + j] != pat[j] { matched = false; break }
+      if s[i + j] != pat[j] {
+        matched = false
+        break
+      }
       j = j + 1
     }
-    if matched { return true }
+    if matched {
+      return true
+    }
     i = i + 1
   }
   false
 }
 
+///|
 /// Save agents to CSV file  
-async fn save_agents_csv(agents : Map[String, Agent], file_path : String) -> Result[Unit, String] {
+async fn save_agents_csv(
+  agents : Map[String, Agent],
+  file_path : String,
+) -> Result[Unit, String] {
   let mut content = "id,name,model,instruction,system_prompt,max_tokens,temperature,tool_ids\n"
   for agent in agents.values() {
     content = content + agent.id + ","
@@ -285,15 +332,19 @@ async fn save_agents_csv(agents : Map[String, Agent], file_path : String) -> Res
     content = content + agent.temperature.to_string() + ","
     content = content + csv_escape(agent.tool_ids) + "\n"
   }
-  
+
   @fs.write_file(file_path, content, create_mode=@fs.CreateOrTruncate) catch {
     _ => return Err("Cannot write file: " + file_path)
   }
   Ok(())
 }
 
+///|
 /// Save tasks to CSV file
-async fn save_tasks_csv(tasks : Map[String, Task], file_path : String) -> Result[Unit, String] {
+async fn save_tasks_csv(
+  tasks : Map[String, Task],
+  file_path : String,
+) -> Result[Unit, String] {
   let mut content = "id,agent_id,description,status,priority,created_at,updated_at,duration_ms\n"
   for task in tasks.values() {
     let status_str = match task.status {
@@ -316,7 +367,7 @@ async fn save_tasks_csv(tasks : Map[String, Task], file_path : String) -> Result
     content = content + task.updated_at + ","
     content = content + task.duration_ms.to_string() + "\n"
   }
-  
+
   @fs.write_file(file_path, content, create_mode=@fs.CreateOrTruncate) catch {
     _ => return Err("Cannot write file: " + file_path)
   }

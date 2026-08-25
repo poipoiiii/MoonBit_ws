@@ -145,3 +145,14 @@ Agent 通过 `static/data/agents.csv` 定义，支持多个 Agent：
 - **前端工具:** Oxlint (代码检查)
 - **数据存储:** CSV
 - **LLM 集成:** DeepSeek API (兼容 OpenAI 格式)
+
+## 第三方依赖与许可
+
+本项目使用以下第三方依赖，其许可证均为宽松开源协议，符合大赛开源许可要求：
+
+| 依赖 | 用途 | 许可证 |
+|------|------|--------|
+| [moonbitlang/async](https://github.com/moonbitlang/async) | HTTP 服务器、SSE、文件 IO、进程调用 | Apache-2.0 |
+| [moonbitlang/core](https://github.com/moonbitlang/core) | 标准库（env、utf8 等） | Apache-2.0 |
+
+依赖版本在 [moon.mod](./moon.mod) 中声明，可通过 `moon update` 拉取。

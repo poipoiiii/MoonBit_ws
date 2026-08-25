@@ -1,0 +1,73 @@
+///|
+test "parse_int handles valid and invalid input" {
+  assert_eq(@lib.parse_int("123"), 123)
+  assert_eq(@lib.parse_int("-42"), -42)
+  assert_eq(@lib.parse_int("0"), 0)
+  assert_eq(@lib.parse_int("abc"), 0)
+  assert_eq(@lib.parse_int(""), 0)
+}
+
+///|
+test "parse_status maps strings to TaskStatus" {
+  assert_true(@lib.parse_status("completed") is @lib.Completed)
+  assert_true(@lib.parse_status("running") is @lib.Running)
+  assert_true(@lib.parse_status("pending") is @lib.Pending)
+  assert_true(@lib.parse_status("failed") is @lib.Failed(_))
+  assert_true(@lib.parse_status("unknown") is @lib.Pending)
+}
+
+///|
+test "url_encode encodes spaces and keeps safe characters" {
+  assert_eq(@lib.url_encode("hello"), "hello")
+  assert_eq(@lib.url_encode("hello world"), "hello+world")
+  assert_eq(@lib.url_encode("中"), "%E4%B8%AD")
+}
+
+///|
+test "TaskManager create/list/delete" {
+  let tm = @lib.TaskManager::new(Map([], capacity=0))
+  let _t = tm.create_task("t1", "agent1", "do something", 1)
+  assert_eq(tm.count(), 1)
+  assert_true(tm.find("t1") is Some(_))
+  assert_eq(tm.list_by_agent("agent1").length(), 1)
+  assert_eq(tm.list_by_agent("agent2").length(), 0)
+  let _ = tm.update_status("t1", @lib.parse_status("running"))
+  assert_true(tm.delete_task("t1"))
+  assert_eq(tm.count(), 0)
+}
+
+///|
+test "AgentManager create/message/clear/delete" {
+  let am = @lib.AgentManager::new(Map([], capacity=0))
+  let _a = am.create_agent("a1", "Alice", "gpt", "instr", "sys", 100, 0.5, "")
+  assert_eq(am.count(), 1)
+  assert_true(am.find("a1") is Some(_))
+  am.add_message("a1", "user", "hello")
+  assert_eq(am.get_conversation("a1").length(), 1)
+  am.clear_conversation("a1")
+  assert_eq(am.get_conversation("a1").length(), 0)
+  assert_true(am.delete_agent("a1"))
+  assert_eq(am.count(), 0)
+}
+
+///|
+test "SuperTaskManager create/find/delete" {
+  let stm = @lib.SuperTaskManager::new(Map([], capacity=0))
+  let _st = stm.create("s1", "research", "do research", "a1")
+  assert_eq(stm.count(), 1)
+  assert_true(stm.find("s1") is Some(_))
+  assert_true(stm.delete("s1"))
+  assert_eq(stm.count(), 0)
+}
+
+///|
+test "parse_tool_call extracts tool name and args" {
+  let response = "{\"tool\": \"search_web\", \"args\": {\"query\": \"hello\"}}"
+  match @lib.parse_tool_call(response) {
+    Some((name, args)) => {
+      assert_eq(name, "search_web")
+      assert_eq(args, "{\"query\": \"hello\"}")
+    }
+    None => assert_true(false)
+  }
+}

@@ -1,6 +1,7 @@
 ///|
 /// Core types for AI Agent Runtime
 
+///|
 /// Agent configuration
 pub struct Agent {
   id : String
@@ -14,6 +15,7 @@ pub struct Agent {
   mut conversation : Array[ChatMessage]
 }
 
+///|
 /// Task status enum
 pub enum TaskStatus {
   Pending
@@ -22,6 +24,7 @@ pub enum TaskStatus {
   Failed(String)
 }
 
+///|
 /// Task struct
 pub struct Task {
   id : String
@@ -34,6 +37,7 @@ pub struct Task {
   duration_ms : Int
 }
 
+///|
 /// Tool definition
 pub struct Tool {
   id : String
@@ -44,40 +48,14 @@ pub struct Tool {
   version : String
 }
 
+///|
 /// Chat message for LLM API
 pub struct ChatMessage {
   role : String
   content : String
 }
 
-/// LLM response
-pub struct LlmResponse {
-  content : String
-  tool_calls : Array[ToolCall]
-}
-
-/// Tool call from LLM
-pub struct ToolCall {
-  id : String
-  function_name : String
-  arguments : String
-}
-
-/// Runtime config loaded from env
-pub struct RuntimeConfig {
-  api_key : String
-  api_base_url : String
-  model : String
-  port : Int
-  data_dir : String
-}
-
-/// SSE event for streaming
-pub struct SseEvent {
-  event : String
-  data : String
-}
-
+///|
 /// Agent usage statistics
 pub struct AgentStats {
   agent_id : String
