@@ -156,6 +156,10 @@ async fn handle_chat_sse(
     prompt_tokens~,
     completion_tokens~,
   )
+  // Persist the updated conversation history so memory survives restarts
+  let _ = ctx.agent_manager.save_chat_history(
+    ctx.data_dir + "/chat_history.json",
+  )
   conn.write_string("data: [DONE]\n\n")
 }
 

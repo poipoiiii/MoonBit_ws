@@ -99,3 +99,20 @@ test "resolve_safe_path keeps valid paths inside data_dir" {
     Err(_) => assert_true(false)
   }
 }
+
+///|
+test "truncate_conversation keeps the recent tail within budget" {
+  let hist = [
+    @lib.ChatMessage::new("user", "one"),
+    @lib.ChatMessage::new("assistant", "two"),
+    @lib.ChatMessage::new("user", "three"),
+  ]
+  // Large budget keeps everything.
+  assert_eq(@lib.truncate_conversation(hist, 1000).length(), 3)
+  // Small budget keeps only the last message.
+  assert_eq(@lib.truncate_conversation(hist, 6).length(), 1)
+  // An over-budget single message is still returned.
+  assert_eq(@lib.truncate_conversation(hist, 1).length(), 1)
+  // Empty stays empty.
+  assert_eq(@lib.truncate_conversation([], 10).length(), 0)
+}

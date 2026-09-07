@@ -41,6 +41,10 @@ async fn main {
     }
   }
 
+  // Load persisted conversation history (multi-turn memory survives restarts)
+  agent_manager.load_chat_history(data_dir + "/chat_history.json")
+  println("Loaded conversation history from \{data_dir + "/chat_history.json"}")
+
   let tool_registry = match @lib.ToolRegistry::load(data_dir + "/tools.csv") {
     Ok(reg) => {
       let all = reg.list_all()

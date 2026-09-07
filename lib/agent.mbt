@@ -371,13 +371,10 @@ pub fn Agent::build_prompt(
   // Build message list: system + conversation history + current instruction
   let messages : Array[ChatMessage] = [system]
 
-  // Add conversation history (limit to last 10 messages to avoid token overflow)
-  let history = self.conversation
-  let start_idx = if history.length() > 10 { history.length() - 10 } else { 0 }
-  let mut i = start_idx
-  while i < history.length() {
-    messages.push(history[i])
-    i = i + 1
+  // Add conversation history (kept within the char-budget memory window)
+  let history = truncate_conversation(self.conversation, MAX_HISTORY_CHARS)
+  for msg in history {
+    messages.push(msg)
   }
 
   // Add current user instruction
