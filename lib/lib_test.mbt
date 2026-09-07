@@ -71,3 +71,31 @@ test "parse_tool_call extracts tool name and args" {
     None => assert_true(false)
   }
 }
+
+///|
+test "resolve_safe_path rejects traversal and absolute paths" {
+  assert_true(@lib.resolve_safe_path("data", "../../etc/passwd") is Err(_))
+  assert_true(@lib.resolve_safe_path("data", "/etc/passwd") is Err(@lib.Absolute))
+  assert_true(@lib.resolve_safe_path("data", "\\etc\\passwd") is Err(@lib.Absolute))
+  assert_true(@lib.resolve_safe_path("data", "C:\\windows\\system32") is Err(@lib.DriveLetter))
+  assert_true(@lib.resolve_safe_path("data", "~/secret") is Err(@lib.Absolute))
+  assert_true(@lib.resolve_safe_path("data", "") is Err(@lib.Empty))
+  assert_true(@lib.resolve_safe_path("data", "..") is Err(@lib.Traversal))
+  assert_true(@lib.resolve_safe_path("data", "a/b/../../c") is Err(@lib.Traversal))
+}
+
+///|
+test "resolve_safe_path keeps valid paths inside data_dir" {
+  match @lib.resolve_safe_path("data", "report.txt") {
+    Ok(p) => assert_true(p == "data/report.txt")
+    Err(_) => assert_true(false)
+  }
+  match @lib.resolve_safe_path("data/", "sub/notes.md") {
+    Ok(p) => assert_true(p == "data/sub/notes.md")
+    Err(_) => assert_true(false)
+  }
+  match @lib.resolve_safe_path("data", "./top/./file.csv") {
+    Ok(p) => assert_true(p == "data/top/file.csv")
+    Err(_) => assert_true(false)
+  }
+}

@@ -3,6 +3,43 @@
 /// Supports: calc_expression, read_file, write_file, search_web, analyze_csv
 
 ///|
+/// Validate that a tool-call argument object contains all the required keys.
+/// Returns a human-readable error listing the missing keys, or `None` when the
+/// payload is a valid object carrying every required field.
+fn missing_arg_error(args_json : String, required : Array[String]) -> String? {
+  let json = try {
+    @json.parse(args_json)
+  } catch {
+    _ => Json::null()
+  }
+  let mut missing_all = false
+  let mut first_missing = ""
+  match json {
+    Object(obj) =>
+      for key in required {
+        if obj.get(key) is None {
+          missing_all = true
+          if first_missing.length() == 0 {
+            first_missing = key
+          }
+        }
+      }
+    _ => first_missing = required[0]
+  }
+  if missing_all || first_missing.length() > 0 {
+    Some(
+      "参数缺失: 需要 \"" +
+      required.join("\", \"") +
+      "\" 字段 (收到: " +
+      args_json +
+      ")",
+    )
+  } else {
+    None
+  }
+}
+
+///|
 /// Execute a tool call and return the result
 pub async fn execute_tool(
   tool_name : String,
@@ -12,9 +49,21 @@ pub async fn execute_tool(
   match tool_name {
     "calc_expression" => execute_calc(args_json)
     "search_web" => execute_search(args_json)
-    "read_file" => execute_read_file(args_json)
-    "write_file" => execute_write_file(args_json, data_dir)
-    "analyze_csv" => execute_analyze_csv(args_json, data_dir)
+    "read_file" =>
+      match missing_arg_error(args_json, ["path"]) {
+        Some(e) => "Error: " + e
+        None => execute_read_file(args_json, data_dir)
+      }
+    "write_file" =>
+      match missing_arg_error(args_json, ["path", "content"]) {
+        Some(e) => "Error: " + e
+        None => execute_write_file(args_json, data_dir)
+      }
+    "analyze_csv" =>
+      match missing_arg_error(args_json, ["path"]) {
+        Some(e) => "Error: " + e
+        None => execute_analyze_csv(args_json, data_dir)
+      }
     _ => "Error: Unknown tool: \{tool_name}"
   }
 }
@@ -696,28 +745,35 @@ fn string_find_from(s : String, pat : String, from : Int) -> Int? {
 }
 
 ///|
-/// Execute read_file - read local file content
-async fn execute_read_file(args : String) -> String {
+/// Execute read_file - read local file content confined within the sandbox
+async fn execute_read_file(args : String, data_dir : String) -> String {
   let path = extract_str(args, "path").unwrap_or(args)
-  let file_result = @fs.open(path, mode=@fs.Mode::ReadOnly) catch {
-    _ => return "Error: Cannot open file: \{path}"
+  let full_path = match resolve_safe_path(data_dir, path) {
+    Err(_) => return "Error: 非法路径: \"\{path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
+    Ok(p) => p
+  }
+  let file_result = @fs.open(full_path, mode=@fs.Mode::ReadOnly) catch {
+    _ => return "Error: Cannot open file: \{full_path}"
   }
   defer file_result.close()
   let data = file_result.read_all() catch {
-    _ => return "Error: Cannot read file: \{path}"
+    _ => return "Error: Cannot read file: \{full_path}"
   }
   let content = data.text() catch {
-    _ => return "Error: File is not valid UTF-8: \{path}"
+    _ => return "Error: File is not valid UTF-8: \{full_path}"
   }
   "文件内容 (" + path + "):\n" + content
 }
 
 ///|
-/// Execute write_file - write content to local file
+/// Execute write_file - write content to a file inside the sandbox
 async fn execute_write_file(args : String, data_dir : String) -> String {
   let path = extract_str(args, "path").unwrap_or("output.txt")
   let content = extract_str(args, "content").unwrap_or("")
-  let full_path = data_dir + "/" + path
+  let full_path = match resolve_safe_path(data_dir, path) {
+    Err(_) => return "Error: 非法路径: \"\{path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
+    Ok(p) => p
+  }
   @fs.write_file(full_path, content, create_mode=@fs.CreateOrTruncate) catch {
     _ => return "Error: Cannot write file: \{full_path}"
   }
@@ -733,10 +789,9 @@ async fn execute_write_file(args : String, data_dir : String) -> String {
 async fn execute_analyze_csv(args : String, data_dir : String) -> String {
   let file_path = extract_path(args)
   let operation = extract_str(args, "operation").unwrap_or("summary")
-  let full_path = if file_path.has_prefix("/") || file_path.has_prefix(".") {
-    file_path
-  } else {
-    data_dir + "/" + file_path
+  let full_path = match resolve_safe_path(data_dir, file_path) {
+    Err(_) => return "Error: 非法路径: \"\{file_path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
+    Ok(p) => p
   }
 
   let file_result = @fs.open(full_path, mode=@fs.Mode::ReadOnly) catch {
