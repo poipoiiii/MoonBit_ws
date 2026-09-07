@@ -98,7 +98,12 @@ fn stream_content(j : @builtin.Json) -> String? {
         None => None
         Some(c) =>
           match c {
-            Array(a) => if a.length() == 0 { None } else { choice_content(a[0]) }
+            Array(a) =>
+              if a.length() == 0 {
+                None
+              } else {
+                choice_content(a[0])
+              }
             _ => None
           }
       }
@@ -148,7 +153,7 @@ fn stream_tool_calls(j : @builtin.Json) -> ToolCallFrag {
               None => ()
               Some(tcs) =>
                 match tcs {
-                  Array(list) => {
+                  Array(list) =>
                     for tc in list {
                       has = true
                       match tc {
@@ -175,7 +180,6 @@ fn stream_tool_calls(j : @builtin.Json) -> ToolCallFrag {
                         _ => ()
                       }
                     }
-                  }
                   _ => ()
                 }
             }

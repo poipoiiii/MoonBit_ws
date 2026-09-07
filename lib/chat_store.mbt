@@ -44,22 +44,14 @@ pub async fn AgentManager::load_chat_history(
     _ => return
   }
   defer file_result.close()
-  let data = file_result.read_all() catch {
-    _ => return
-  }
-  let content = data.text() catch {
-    _ => return
-  }
-  let json = try {
-    @json.parse(content)
-  } catch {
-    _ => return
-  }
+  let data = file_result.read_all() catch { _ => return }
+  let content = data.text() catch { _ => return }
+  let json = @json.parse(content) catch { _ => return }
   match json {
     Object(obj) =>
       for agent_id in obj.keys() {
         match obj.get(agent_id) {
-          Some(arr_json) => {
+          Some(arr_json) =>
             match arr_json {
               Array(arr) => {
                 let history = messages_from_json(arr)
@@ -70,7 +62,6 @@ pub async fn AgentManager::load_chat_history(
               }
               _ => ()
             }
-          }
           None => ()
         }
       }

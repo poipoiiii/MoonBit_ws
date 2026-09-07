@@ -75,13 +75,22 @@ test "parse_tool_call extracts tool name and args" {
 ///|
 test "resolve_safe_path rejects traversal and absolute paths" {
   assert_true(@lib.resolve_safe_path("data", "../../etc/passwd") is Err(_))
-  assert_true(@lib.resolve_safe_path("data", "/etc/passwd") is Err(@lib.Absolute))
-  assert_true(@lib.resolve_safe_path("data", "\\etc\\passwd") is Err(@lib.Absolute))
-  assert_true(@lib.resolve_safe_path("data", "C:\\windows\\system32") is Err(@lib.DriveLetter))
+  assert_true(
+    @lib.resolve_safe_path("data", "/etc/passwd") is Err(@lib.Absolute),
+  )
+  assert_true(
+    @lib.resolve_safe_path("data", "\\etc\\passwd") is Err(@lib.Absolute),
+  )
+  assert_true(
+    @lib.resolve_safe_path("data", "C:\\windows\\system32")
+    is Err(@lib.DriveLetter),
+  )
   assert_true(@lib.resolve_safe_path("data", "~/secret") is Err(@lib.Absolute))
   assert_true(@lib.resolve_safe_path("data", "") is Err(@lib.Empty))
   assert_true(@lib.resolve_safe_path("data", "..") is Err(@lib.Traversal))
-  assert_true(@lib.resolve_safe_path("data", "a/b/../../c") is Err(@lib.Traversal))
+  assert_true(
+    @lib.resolve_safe_path("data", "a/b/../../c") is Err(@lib.Traversal),
+  )
 }
 
 ///|

@@ -21,7 +21,10 @@ pub enum PathError {
 ///|
 /// Resolve `raw` relative to `data_dir`, ensuring the result stays inside the
 /// sandbox. Returns `Err(PathError)` when the path is unusable or escapes.
-pub fn resolve_safe_path(data_dir : String, raw : String) -> Result[String, PathError] {
+pub fn resolve_safe_path(
+  data_dir : String,
+  raw : String,
+) -> Result[String, PathError] {
   let trimmed = raw.trim(chars=" \t\r\n").to_owned()
   if trimmed.length() == 0 {
     return Err(Empty)
@@ -43,7 +46,9 @@ pub fn resolve_safe_path(data_dir : String, raw : String) -> Result[String, Path
   let mut i = 0
   let mut start = 0
   while i <= trimmed.length() {
-    if i == trimmed.length() || trimmed[i].to_int() == 47 || trimmed[i].to_int() == 92 {
+    if i == trimmed.length() ||
+      trimmed[i].to_int() == 47 ||
+      trimmed[i].to_int() == 92 {
       let seg = trimmed[start:i].to_owned()
       if seg == ".." {
         return Err(Traversal)

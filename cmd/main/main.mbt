@@ -95,16 +95,8 @@ async fn main {
 
   // Create runtime context
   let ctx = @server.RuntimeContext::new(
-    api_key,
-    model,
-    agent_manager,
-    tool_registry,
-    task_manager,
-    super_task_manager,
-    stats_manager,
-    data_dir,
-    cors_origin,
-    total_memory_mb,
+    api_key, model, agent_manager, tool_registry, task_manager, super_task_manager,
+    stats_manager, data_dir, cors_origin, total_memory_mb,
   )
 
   // Start HTTP server

@@ -7,11 +7,7 @@
 /// Returns a human-readable error listing the missing keys, or `None` when the
 /// payload is a valid object carrying every required field.
 fn missing_arg_error(args_json : String, required : Array[String]) -> String? {
-  let json = try {
-    @json.parse(args_json)
-  } catch {
-    _ => Json::null()
-  }
+  let json = @json.parse(args_json) catch { _ => Json::null() }
   let mut missing_all = false
   let mut first_missing = ""
   match json {
@@ -63,9 +59,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "计算简单的四则运算表达式 (如 \"1+2*3\")",
       "{\"expression\":\"string\"}",
       ["expression"],
-      async fn(args, _) {
-        execute_calc(args)
-      },
+      async fn(args, _) { execute_calc(args) },
     ),
   )
   engine.register(
@@ -74,9 +68,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "通过网络搜索获取最新信息，返回带链接的结果列表",
       "{\"query\":\"string\"}",
       ["query"],
-      async fn(args, _) {
-        execute_search(args)
-      },
+      async fn(args, _) { execute_search(args) },
     ),
   )
   engine.register(
@@ -85,9 +77,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "读取 data_dir 沙箱内的文本文件内容",
       "{\"path\":\"string\"}",
       ["path"],
-      async fn(args, data_dir) {
-        execute_read_file(args, data_dir)
-      },
+      async fn(args, data_dir) { execute_read_file(args, data_dir) },
     ),
   )
   engine.register(
@@ -96,9 +86,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "向 data_dir 沙箱内写入文本文件",
       "{\"path\":\"string\",\"content\":\"string\"}",
       ["path", "content"],
-      async fn(args, data_dir) {
-        execute_write_file(args, data_dir)
-      },
+      async fn(args, data_dir) { execute_write_file(args, data_dir) },
     ),
   )
   engine.register(
@@ -107,9 +95,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "分析 data_dir 沙箱内的 CSV 文件，返回行列统计",
       "{\"path\":\"string\",\"operation\":\"string\"}",
       ["path"],
-      async fn(args, data_dir) {
-        execute_analyze_csv(args, data_dir)
-      },
+      async fn(args, data_dir) { execute_analyze_csv(args, data_dir) },
     ),
   )
   engine
@@ -796,7 +782,8 @@ fn string_find_from(s : String, pat : String, from : Int) -> Int? {
 async fn execute_read_file(args : String, data_dir : String) -> String {
   let path = extract_str(args, "path").unwrap_or(args)
   let full_path = match resolve_safe_path(data_dir, path) {
-    Err(_) => return "Error: 非法路径: \"\{path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
+    Err(_) =>
+      return "Error: 非法路径: \"\{path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
     Ok(p) => p
   }
   let file_result = @fs.open(full_path, mode=@fs.Mode::ReadOnly) catch {
@@ -818,7 +805,8 @@ async fn execute_write_file(args : String, data_dir : String) -> String {
   let path = extract_str(args, "path").unwrap_or("output.txt")
   let content = extract_str(args, "content").unwrap_or("")
   let full_path = match resolve_safe_path(data_dir, path) {
-    Err(_) => return "Error: 非法路径: \"\{path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
+    Err(_) =>
+      return "Error: 非法路径: \"\{path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
     Ok(p) => p
   }
   @fs.write_file(full_path, content, create_mode=@fs.CreateOrTruncate) catch {
@@ -837,7 +825,8 @@ async fn execute_analyze_csv(args : String, data_dir : String) -> String {
   let file_path = extract_path(args)
   let operation = extract_str(args, "operation").unwrap_or("summary")
   let full_path = match resolve_safe_path(data_dir, file_path) {
-    Err(_) => return "Error: 非法路径: \"\{file_path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
+    Err(_) =>
+      return "Error: 非法路径: \"\{file_path}\"（仅允许 data_dir 内的相对路径，禁止 ../ 与绝对路径）"
     Ok(p) => p
   }
 

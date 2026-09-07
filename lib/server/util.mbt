@@ -64,9 +64,7 @@ fn json_escape(s : String) -> String {
 ///|
 /// Parse a complete JSON text into a Json value, returning None on invalid input.
 fn try_parse_json(s : String) -> @builtin.Json? {
-  try {
-    Some(@json.parse(s))
-  } catch {
+  Some(@json.parse(s)) catch {
     _ => None
   }
 }

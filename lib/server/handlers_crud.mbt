@@ -462,50 +462,50 @@ async fn handle_agent_detail(
   let tools = agent.get_tools(ctx.tool_registry)
   let tools_array = "[" +
     tools
-      .map(fn(t) {
-        "{\"id\":\"" +
-        json_escape(t.id) +
-        "\",\"name\":\"" +
-        json_escape(t.name) +
-        "\",\"description\":\"" +
-        json_escape(t.description) +
-        "\",\"version\":\"" +
-        json_escape(t.version) +
-        "\",\"enabled\":" +
-        (if t.enabled { "true" } else { "false" }) +
-        "}"
-      })
-      .join(",") +
+    .map(fn(t) {
+      "{\"id\":\"" +
+      json_escape(t.id) +
+      "\",\"name\":\"" +
+      json_escape(t.name) +
+      "\",\"description\":\"" +
+      json_escape(t.description) +
+      "\",\"version\":\"" +
+      json_escape(t.version) +
+      "\",\"enabled\":" +
+      (if t.enabled { "true" } else { "false" }) +
+      "}"
+    })
+    .join(",") +
     "]"
 
   // Tasks for this agent
   let tasks = ctx.task_manager.list_by_agent(agent_id)
   let tasks_array = "[" +
     tasks
-      .map(fn(t) {
-        let status_str = match t.status {
-          @lib.Pending => "\"pending\""
-          @lib.Running => "\"running\""
-          @lib.Completed => "\"completed\""
-          @lib.Failed(_) => "\"failed\""
-        }
-        "{\"id\":\"" +
-        json_escape(t.id) +
-        "\",\"description\":\"" +
-        json_escape(t.description) +
-        "\",\"status\":" +
-        status_str +
-        ",\"priority\":" +
-        t.priority.to_string() +
-        ",\"created_at\":\"" +
-        json_escape(t.created_at) +
-        "\",\"updated_at\":\"" +
-        json_escape(t.updated_at) +
-        "\",\"duration_ms\":" +
-        t.duration_ms.to_string() +
-        "}"
-      })
-      .join(",") +
+    .map(fn(t) {
+      let status_str = match t.status {
+        @lib.Pending => "\"pending\""
+        @lib.Running => "\"running\""
+        @lib.Completed => "\"completed\""
+        @lib.Failed(_) => "\"failed\""
+      }
+      "{\"id\":\"" +
+      json_escape(t.id) +
+      "\",\"description\":\"" +
+      json_escape(t.description) +
+      "\",\"status\":" +
+      status_str +
+      ",\"priority\":" +
+      t.priority.to_string() +
+      ",\"created_at\":\"" +
+      json_escape(t.created_at) +
+      "\",\"updated_at\":\"" +
+      json_escape(t.updated_at) +
+      "\",\"duration_ms\":" +
+      t.duration_ms.to_string() +
+      "}"
+    })
+    .join(",") +
     "]"
 
   // Stats
@@ -599,24 +599,24 @@ async fn handle_agent_stats(
     let all_stats = ctx.stats_manager.get_all_stats()
     "[" +
     all_stats
-      .map(fn(s) {
-        "{\"agent_id\":\"" +
-        json_escape(s.agent_id) +
-        "\",\"total_conversations\":" +
-        s.total_conversations.to_string() +
-        ",\"total_input_chars\":" +
-        s.total_input_chars.to_string() +
-        ",\"total_output_chars\":" +
-        s.total_output_chars.to_string() +
-        ",\"total_prompt_tokens\":" +
-        s.total_prompt_tokens.to_string() +
-        ",\"total_completion_tokens\":" +
-        s.total_completion_tokens.to_string() +
-        ",\"last_active_at\":\"" +
-        json_escape(s.last_active_at) +
-        "\"}"
-      })
-      .join(",") +
+    .map(fn(s) {
+      "{\"agent_id\":\"" +
+      json_escape(s.agent_id) +
+      "\",\"total_conversations\":" +
+      s.total_conversations.to_string() +
+      ",\"total_input_chars\":" +
+      s.total_input_chars.to_string() +
+      ",\"total_output_chars\":" +
+      s.total_output_chars.to_string() +
+      ",\"total_prompt_tokens\":" +
+      s.total_prompt_tokens.to_string() +
+      ",\"total_completion_tokens\":" +
+      s.total_completion_tokens.to_string() +
+      ",\"last_active_at\":\"" +
+      json_escape(s.last_active_at) +
+      "\"}"
+    })
+    .join(",") +
     "]"
   }
 
@@ -636,16 +636,16 @@ async fn handle_tools_json(
   let tools = ctx.tool_registry.list_enabled()
   let json = "[" +
     tools
-      .map(fn(t) {
-        "{\"id\":\"" +
-        t.id +
-        "\",\"name\":\"" +
-        t.name +
-        "\",\"description\":\"" +
-        t.description +
-        "\",\"enabled\":true}"
-      })
-      .join(",") +
+    .map(fn(t) {
+      "{\"id\":\"" +
+      t.id +
+      "\",\"name\":\"" +
+      t.name +
+      "\",\"description\":\"" +
+      t.description +
+      "\",\"enabled\":true}"
+    })
+    .join(",") +
     "]"
 
   conn.send_response(200, "OK", extra_headers={
@@ -702,14 +702,14 @@ async fn handle_chat_history(
   let history = ctx.agent_manager.get_conversation(agent_id)
   let json = "[" +
     history
-      .map(fn(msg) {
-        "{\"role\":\"" +
-        json_escape(msg.role) +
-        "\",\"content\":\"" +
-        json_escape(msg.content) +
-        "\"}"
-      })
-      .join(",") +
+    .map(fn(msg) {
+      "{\"role\":\"" +
+      json_escape(msg.role) +
+      "\",\"content\":\"" +
+      json_escape(msg.content) +
+      "\"}"
+    })
+    .join(",") +
     "]"
 
   conn.send_response(200, "OK", extra_headers={
@@ -775,32 +775,32 @@ async fn handle_tasks_list(
 
   let json = "[" +
     tasks
-      .map(fn(t) {
-        let status_str = match t.status {
-          @lib.Pending => "\"pending\""
-          @lib.Running => "\"running\""
-          @lib.Completed => "\"completed\""
-          @lib.Failed(_) => "\"failed\""
-        }
-        "{\"id\":\"" +
-        json_escape(t.id) +
-        "\",\"agent_id\":\"" +
-        json_escape(t.agent_id) +
-        "\",\"description\":\"" +
-        json_escape(t.description) +
-        "\",\"status\":" +
-        status_str +
-        ",\"priority\":" +
-        t.priority.to_string() +
-        ",\"created_at\":\"" +
-        json_escape(t.created_at) +
-        "\",\"updated_at\":\"" +
-        json_escape(t.updated_at) +
-        "\",\"duration_ms\":" +
-        t.duration_ms.to_string() +
-        "}"
-      })
-      .join(",") +
+    .map(fn(t) {
+      let status_str = match t.status {
+        @lib.Pending => "\"pending\""
+        @lib.Running => "\"running\""
+        @lib.Completed => "\"completed\""
+        @lib.Failed(_) => "\"failed\""
+      }
+      "{\"id\":\"" +
+      json_escape(t.id) +
+      "\",\"agent_id\":\"" +
+      json_escape(t.agent_id) +
+      "\",\"description\":\"" +
+      json_escape(t.description) +
+      "\",\"status\":" +
+      status_str +
+      ",\"priority\":" +
+      t.priority.to_string() +
+      ",\"created_at\":\"" +
+      json_escape(t.created_at) +
+      "\",\"updated_at\":\"" +
+      json_escape(t.updated_at) +
+      "\",\"duration_ms\":" +
+      t.duration_ms.to_string() +
+      "}"
+    })
+    .join(",") +
     "]"
 
   conn.send_response(200, "OK", extra_headers={
@@ -860,20 +860,20 @@ async fn handle_super_tasks_json(
   let tasks = ctx.super_task_manager.list_all()
   let json = "[" +
     tasks
-      .map(fn(st) {
-        "{\"id\":\"" +
-        json_escape(st.id) +
-        "\",\"name\":\"" +
-        json_escape(st.name) +
-        "\",\"description\":\"" +
-        json_escape(st.description) +
-        "\",\"agent_id\":\"" +
-        json_escape(st.agent_id) +
-        "\",\"created_at\":\"" +
-        json_escape(st.created_at) +
-        "\"}"
-      })
-      .join(",") +
+    .map(fn(st) {
+      "{\"id\":\"" +
+      json_escape(st.id) +
+      "\",\"name\":\"" +
+      json_escape(st.name) +
+      "\",\"description\":\"" +
+      json_escape(st.description) +
+      "\",\"agent_id\":\"" +
+      json_escape(st.agent_id) +
+      "\",\"created_at\":\"" +
+      json_escape(st.created_at) +
+      "\"}"
+    })
+    .join(",") +
     "]"
 
   conn.send_response(200, "OK", extra_headers={
