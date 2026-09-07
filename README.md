@@ -2,6 +2,14 @@
 
 基于 [MoonBit](https://moonbitlang.com/) 构建的轻量级 AI Agent 运行时框架，提供 Agent 管理、任务调度、工具调用及 LLM 集成能力。
 
+## 特性
+
+- **Agent CRUD**：通过 CSV 定义与管理多个 Agent，支持统计与监控。
+- **SSE 流式对话**：基于 DeepSeek / OpenAI 兼容接口，支持多轮原生函数调用回环。
+- **可插拔工具引擎**：`ToolSpec` + `ToolEngine` 注册架构，新增工具无需改动执行调度。
+- **文件工具沙箱**：`read_file` / `write_file` / `analyze_csv` 均限定在 `data_dir` 内，拒绝绝对路径与 `../` 穿越。
+- **对话持久化**：聊天历史写入 `chat_history.json`，重启后记忆保留；按字符预算截断记忆窗口。
+
 ## 架构概览
 
 ```
@@ -17,8 +25,9 @@
 └────────────────┬────────────────────┘
                  │
 ┌────────────────▼────────────────────┐
-│          Data Layer (CSV)           │
-│    agents.csv  tools.csv  tasks.csv │
+│          Data Layer                 │
+│   agents.csv tools.csv tasks.csv +  │
+│   chat_history.json (对话持久化)     │
 └─────────────────────────────────────┘
 ```
 
@@ -27,12 +36,24 @@
 ```
 MoonBit_ws/
 ├── cmd/main/              # 后端入口 (MoonBit)
-│   ├── main.mbt           # HTTP 服务器 + SSE 流式 API
+│   ├── main.mbt           # 加载配置、装配 Manager、启动 HTTP 服务器
 │   └── moon.pkg
-├── lib/                   # 后端核心库
-│   ├── agent.mbt          # Agent 定义与管理
+├── lib/                   # 后端核心库 (分层)
+│   ├── server/            # HTTP/SSE 请求处理层
+│   │   ├── handlers_chat.mbt   # 聊天 SSE + 工具调用回环
+│   │   ├── handlers_crud.mbt   # Agent/Task CRUD API
+│   │   ├── stream.mbt          # SSE 流式协议
+│   │   ├── page.mbt            # 前端页面
+│   │   ├── runtime.mbt         # 运行时上下文
+│   │   └── util.mbt            # 请求工具函数
+│   ├── agent.mbt          # Agent 管理与统计
 │   ├── task.mbt           # 任务模型与调度
-│   ├── tool.mbt           # 工具注册与执行
+│   ├── super_task.mbt     # 超级任务
+│   ├── tool.mbt           # 工具注册表
+│   ├── tool_spec.mbt      # 可插拔 ToolSpec/ToolEngine
+│   ├── tool_executor.mbt  # 内置工具实现 (calc/search/read/write/csv)
+│   ├── fs_guard.mbt       # 路径沙箱 (防路径穿越)
+│   ├── chat_store.mbt     # 对话持久化 + 记忆窗口截断
 │   ├── csv_util.mbt       # CSV 读写工具
 │   ├── llm.mbt            # LLM 网关
 │   └── types.mbt          # 核心数据结构
@@ -45,15 +66,17 @@ MoonBit_ws/
 │   ├── index.html
 │   ├── vite.config.js
 │   └── tailwind.config.js
-├── static/data/           # 静态数据 (CSV)
+├── static/data/           # 静态数据
 │   ├── agents.csv         # Agent 配置
 │   ├── tools.csv          # 工具定义
-│   └── tasks.csv          # 任务记录
+│   ├── tasks.csv          # 任务记录
+│   └── chat_history.json  # 对话历史 (运行期持久化)
 ├── docs/
 │   └── agent-runtime-design.md  # 设计文档
 ├── .env                   # 环境变量 (不提交)
 ├── .gitignore
 ├── moon.mod               # MoonBit 模块配置
+├── CHANGELOG.md           # 更新记录
 ├── run.ps1                # Windows 启动脚本
 └── run.cmd                # Windows 启动脚本 (CMD)
 ```
@@ -143,7 +166,7 @@ Agent 通过 `static/data/agents.csv` 定义，支持多个 Agent：
 - **前端框架:** React 19 + Vite
 - **前端样式:** Tailwind CSS
 - **前端工具:** Oxlint (代码检查)
-- **数据存储:** CSV
+- **数据存储:** CSV（配置/任务）+ JSON（对话持久化）
 - **LLM 集成:** DeepSeek API (兼容 OpenAI 格式)
 
 ## 第三方依赖与许可
