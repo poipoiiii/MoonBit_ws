@@ -30,5 +30,5 @@ fn string_find(s : String, pat : String) -> Int? {
 ///|
 /// Create a chat message
 pub fn ChatMessage::new(role : String, content : String) -> ChatMessage {
-  { role, content }
+  { role, content, }
 }

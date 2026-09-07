@@ -88,7 +88,13 @@ pub fn SuperTaskManager::create(
   description : String,
   agent_id : String,
 ) -> SuperTask {
-  let st = SuperTask::{ id, name, description, agent_id, created_at: now_str() }
+  let st = SuperTask::{
+    id,
+    name,
+    description,
+    agent_id,
+    created_at: now_str(),
+  }
   self.tasks[id] = st
   st
 }

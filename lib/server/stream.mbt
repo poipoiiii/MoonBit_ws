@@ -187,7 +187,7 @@ fn stream_tool_calls(j : @builtin.Json) -> ToolCallFrag {
         }
     }
   }
-  { id, name, args, has }
+  { id, name, args, has, }
 }
 
 ///|

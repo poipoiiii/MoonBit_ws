@@ -25,7 +25,7 @@ pub fn ToolSpec::new(
   required : Array[String],
   execute : async (String, String) -> String,
 ) -> ToolSpec {
-  { name, description, input_schema, required, execute }
+  { name, description, input_schema, required, execute, }
 }
 
 ///|
@@ -37,7 +37,7 @@ pub struct ToolEngine {
 ///|
 /// Create an empty tool engine.
 pub fn ToolEngine::new() -> ToolEngine {
-  { specs: Map([], capacity=0) }
+  { specs: Map([], capacity=0), }
 }
 
 ///|
