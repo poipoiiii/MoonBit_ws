@@ -40,32 +40,79 @@ fn missing_arg_error(args_json : String, required : Array[String]) -> String? {
 }
 
 ///|
-/// Execute a tool call and return the result
+/// Execute a tool call and return the result.
+///
+/// Dispatches through the built-in `ToolEngine`, which validates required args
+/// and looks up the registered `ToolSpec`. New tools are added by registering a
+/// new spec via `ToolEngine::register` rather than extending a match expression.
 pub async fn execute_tool(
   tool_name : String,
   args_json : String,
   data_dir : String,
 ) -> String {
-  match tool_name {
-    "calc_expression" => execute_calc(args_json)
-    "search_web" => execute_search(args_json)
-    "read_file" =>
-      match missing_arg_error(args_json, ["path"]) {
-        Some(e) => "Error: " + e
-        None => execute_read_file(args_json, data_dir)
-      }
-    "write_file" =>
-      match missing_arg_error(args_json, ["path", "content"]) {
-        Some(e) => "Error: " + e
-        None => execute_write_file(args_json, data_dir)
-      }
-    "analyze_csv" =>
-      match missing_arg_error(args_json, ["path"]) {
-        Some(e) => "Error: " + e
-        None => execute_analyze_csv(args_json, data_dir)
-      }
-    _ => "Error: Unknown tool: \{tool_name}"
-  }
+  ToolEngine::builtin().execute(tool_name, args_json, data_dir)
+}
+
+///|
+/// Build the engine with the default built-in tools registered.
+pub fn ToolEngine::builtin() -> ToolEngine {
+  let engine = ToolEngine::new()
+  engine.register(
+    ToolSpec::new(
+      "calc_expression",
+      "计算简单的四则运算表达式 (如 \"1+2*3\")",
+      "{\"expression\":\"string\"}",
+      ["expression"],
+      async fn(args, _) {
+        execute_calc(args)
+      },
+    ),
+  )
+  engine.register(
+    ToolSpec::new(
+      "search_web",
+      "通过网络搜索获取最新信息，返回带链接的结果列表",
+      "{\"query\":\"string\"}",
+      ["query"],
+      async fn(args, _) {
+        execute_search(args)
+      },
+    ),
+  )
+  engine.register(
+    ToolSpec::new(
+      "read_file",
+      "读取 data_dir 沙箱内的文本文件内容",
+      "{\"path\":\"string\"}",
+      ["path"],
+      async fn(args, data_dir) {
+        execute_read_file(args, data_dir)
+      },
+    ),
+  )
+  engine.register(
+    ToolSpec::new(
+      "write_file",
+      "向 data_dir 沙箱内写入文本文件",
+      "{\"path\":\"string\",\"content\":\"string\"}",
+      ["path", "content"],
+      async fn(args, data_dir) {
+        execute_write_file(args, data_dir)
+      },
+    ),
+  )
+  engine.register(
+    ToolSpec::new(
+      "analyze_csv",
+      "分析 data_dir 沙箱内的 CSV 文件，返回行列统计",
+      "{\"path\":\"string\",\"operation\":\"string\"}",
+      ["path"],
+      async fn(args, data_dir) {
+        execute_analyze_csv(args, data_dir)
+      },
+    ),
+  )
+  engine
 }
 
 ///|

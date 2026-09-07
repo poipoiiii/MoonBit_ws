@@ -116,3 +116,23 @@ test "truncate_conversation keeps the recent tail within budget" {
   // Empty stays empty.
   assert_eq(@lib.truncate_conversation([], 10).length(), 0)
 }
+
+///|
+test "tool engine registers and looks up specs" {
+  let engine = @lib.ToolEngine::new()
+  engine.register(
+    @lib.ToolSpec::new("ping", "echo", "{}", [], async fn(_, _) { "pong" }),
+  )
+  engine.register(
+    @lib.ToolSpec::new(
+      "need_arg",
+      "requires arg",
+      "{\"x\":\"string\"}",
+      ["x"],
+      async fn(args, _) { "got:" + args },
+    ),
+  )
+  assert_true(engine.find("ping") is Some(_))
+  assert_true(engine.find("missing") is None)
+  assert_eq(engine.names().length(), 2)
+}
