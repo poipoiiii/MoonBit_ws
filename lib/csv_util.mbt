@@ -123,9 +123,16 @@ pub fn parse_int(s : String) -> Int {
 
 ///|
 /// Parse string to float, default to 0.0 on failure
-fn parse_float(s : String) -> Float {
-  let result = parse_int(s)
-  Float::from_int(result)
+pub fn parse_float(s : String) -> Float {
+  let t = s.trim()
+  if t.length() == 0 {
+    return 0.0
+  }
+  try {
+    Float::from_double(@strconv.parse_double(t))
+  } catch {
+    _ => 0.0
+  }
 }
 
 ///|
@@ -329,7 +336,7 @@ async fn save_agents_csv(
     content = content + csv_escape(agent.instruction) + ","
     content = content + csv_escape(agent.system_prompt) + ","
     content = content + agent.max_tokens.to_string() + ","
-    content = content + agent.temperature.to_string() + ","
+    content = content + format_float_value(agent.temperature) + ","
     content = content + csv_escape(agent.tool_ids) + "\n"
   }
 
@@ -337,6 +344,16 @@ async fn save_agents_csv(
     _ => return Err("Cannot write file: " + file_path)
   }
   Ok(())
+}
+
+///|
+/// Format a float as a short decimal for CSV storage. Rounds away the noise
+/// from 32-bit float storage (e.g. 0.30000001192092896 -> 0.3) while keeping
+/// the value round-trippable.
+fn format_float_value(v : Float) -> String {
+  let d = v.to_double()
+  let rounded = (d * 10000.0).round() / 10000.0
+  rounded.to_string()
 }
 
 ///|

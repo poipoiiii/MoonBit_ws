@@ -6,4 +6,5 @@ import {
   "moonbitlang/core/builtin",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
+  "moonbitlang/core/strconv",
 }

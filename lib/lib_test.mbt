@@ -8,6 +8,15 @@ test "parse_int handles valid and invalid input" {
 }
 
 ///|
+test "parse_float preserves fractional temperature values" {
+  assert_true(@lib.parse_float("0.3") > 0.2 && @lib.parse_float("0.3") < 0.4)
+  assert_true(@lib.parse_float("0.5") > 0.4 && @lib.parse_float("0.5") < 0.6)
+  assert_eq(@lib.parse_float("0"), 0.0)
+  assert_eq(@lib.parse_float(""), 0.0)
+  assert_eq(@lib.parse_float("abc"), 0.0)
+}
+
+///|
 test "parse_status maps strings to TaskStatus" {
   assert_true(@lib.parse_status("completed") is @lib.Completed)
   assert_true(@lib.parse_status("running") is @lib.Running)
