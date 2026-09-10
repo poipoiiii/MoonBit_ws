@@ -129,7 +129,7 @@ pub fn parse_float(s : String) -> Float {
     return 0.0
   }
   try {
-    Float::from_double(@strconv.parse_double(t))
+    Float::from_double(@string.parse_double(t))
   } catch {
     _ => 0.0
   }

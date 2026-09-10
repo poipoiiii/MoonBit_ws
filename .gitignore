@@ -16,6 +16,9 @@ __misc/
 pkg.generated.mbti
 *.mbti
 
+# Runtime-generated conversation store
+static/data/chat_history.json
+
 # Scratch/debug code — keep only the acceptance checklist
 scratch_test/*
 !scratch_test/验收.txt

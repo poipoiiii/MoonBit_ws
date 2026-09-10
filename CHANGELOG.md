@@ -18,6 +18,10 @@ All notable changes to this project are documented in this file.
 
 ### Tools
 - 可插拔工具引擎：新增 `ToolSpec` + `ToolEngine` 注册架构，替代硬编码 `match` 调度，支持注册新工具。
+- 新增内置工具 `json_format`（校验并美化打印 JSON）与 `text_stats`（统计字符数/词数/行数）。
+
+### Fixed
+- 修复 Agent 保存时 `temperature` 被清零：`parse_float` 原基于 `parse_int` 实现，导致 `0.3` 等小数被解析为 `0` 并回写 CSV。改用 `@string.parse_double`，并在写回时消除 32 位浮点噪声。
 
 ## [0.1.0] - 2026-09-07
 

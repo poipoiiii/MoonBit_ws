@@ -154,3 +154,23 @@ test "tool engine registers and looks up specs" {
   assert_true(engine.find("missing") is None)
   assert_eq(engine.names().length(), 2)
 }
+
+///|
+async test "builtin engine registers and runs the new tools" {
+  let engine = @lib.ToolEngine::builtin()
+  assert_true(engine.find("json_format") is Some(_))
+  assert_true(engine.find("text_stats") is Some(_))
+  let ok = engine.execute("json_format", "{\"json\":\"{\\\"a\\\":1}\"}", ".") catch {
+    _ => "ERR"
+  }
+  assert_true(ok.contains("格式化结果"))
+  let bad = engine.execute("json_format", "{\"json\":\"not json\"}", ".") catch {
+    _ => "ERR"
+  }
+  assert_true(bad.contains("解析失败"))
+  let stats = engine.execute("text_stats", "{\"text\":\"hello world\\nfoo\"}", ".") catch {
+    _ => "ERR"
+  }
+  assert_true(stats.contains("词数=3"))
+  assert_true(stats.contains("行数=2"))
+}

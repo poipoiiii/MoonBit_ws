@@ -98,6 +98,24 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       async fn(args, data_dir) { execute_analyze_csv(args, data_dir) },
     ),
   )
+  engine.register(
+    ToolSpec::new(
+      "json_format",
+      "校验并美化打印一段 JSON 文本，输入不合法时返回错误",
+      "{\"json\":\"string\"}",
+      ["json"],
+      async fn(args, _) { execute_json_format(args) },
+    ),
+  )
+  engine.register(
+    ToolSpec::new(
+      "text_stats",
+      "统计一段文本的字符数、词数与行数",
+      "{\"text\":\"string\"}",
+      ["text"],
+      async fn(args, _) { execute_text_stats(args) },
+    ),
+  )
   engine
 }
 
@@ -171,6 +189,30 @@ fn extract_path(json : String) -> String {
 }
 
 ///|
+/// Read a string field from a tool-call argument object.
+///
+/// Unlike the hand-rolled `extract_str`, this goes through the real JSON
+/// parser, so escaped quotes, newlines and unicode escapes in the argument are
+/// decoded correctly.
+fn tool_arg_string(args_json : String, key : String) -> String? {
+  try {
+    match @json.parse(args_json) {
+      Object(obj) =>
+        match obj.get(key) {
+          Some(String(s)) => Some(s)
+          Some(Number(n, ..)) => Some(n.to_string())
+          Some(True) => Some("true")
+          Some(False) => Some("false")
+          _ => None
+        }
+      _ => None
+    }
+  } catch {
+    _ => None
+  }
+}
+
+///|
 /// Execute calc_expression - evaluate basic arithmetic expression using integer math
 fn execute_calc(args : String) -> String {
   let expr = extract_str(args, "expression").unwrap_or(args)
@@ -231,6 +273,58 @@ fn execute_calc(args : String) -> String {
   let result = Float::from_int(result_int) +
     Float::from_int(result_frac) / Float::from_int(result_div)
   "计算结果: " + result.to_string()
+}
+
+///|
+/// Execute json_format - validate a JSON document and return it pretty-printed.
+/// Accepts the document under the "json" key (falling back to "text").
+fn execute_json_format(args : String) -> String {
+  let raw = match tool_arg_string(args, "json") {
+    Some(s) => s
+    None => tool_arg_string(args, "text").unwrap_or("")
+  }
+  if raw.trim().length() == 0 {
+    return "错误: 缺少 json 参数 (需要 {\"json\": \"...\"})"
+  }
+  let parsed = @json.parse(raw) catch {
+    _ => return "JSON 解析失败: 输入不是合法的 JSON 文本"
+  }
+  "格式化结果:\n" + parsed.stringify(indent=2)
+}
+
+///|
+/// Execute text_stats - report character, word and line counts for a text.
+/// Accepts the text under the "text" key.
+fn execute_text_stats(args : String) -> String {
+  let text = tool_arg_string(args, "text").unwrap_or("")
+  let chars = text.length()
+  let mut lines = 1
+  let mut words = 0
+  let mut in_word = false
+  let mut i = 0
+  while i < chars {
+    let ch = text[i]
+    let is_ws = ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+    if ch == '\n' {
+      lines = lines + 1
+    }
+    if is_ws {
+      in_word = false
+    } else if !in_word {
+      words = words + 1
+      in_word = true
+    }
+    i = i + 1
+  }
+  if chars == 0 {
+    lines = 0
+  }
+  "文本统计: 字符数=" +
+  chars.to_string() +
+  ", 词数=" +
+  words.to_string() +
+  ", 行数=" +
+  lines.to_string()
 }
 
 ///|

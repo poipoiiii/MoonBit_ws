@@ -51,7 +51,7 @@ MoonBit_ws/
 │   ├── super_task.mbt     # 超级任务
 │   ├── tool.mbt           # 工具注册表
 │   ├── tool_spec.mbt      # 可插拔 ToolSpec/ToolEngine
-│   ├── tool_executor.mbt  # 内置工具实现 (calc/search/read/write/csv)
+│   ├── tool_executor.mbt  # 内置工具实现 (calc/search/read/write/csv/json/text)
 │   ├── fs_guard.mbt       # 路径沙箱 (防路径穿越)
 │   ├── chat_store.mbt     # 对话持久化 + 记忆窗口截断
 │   ├── csv_util.mbt       # CSV 读写工具
