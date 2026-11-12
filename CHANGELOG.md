@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.2.1] - 2026-11-12
+
+### Compatibility
+- 升级 `moonbitlang/async` 依赖 `0.20.2` → `0.22.4`，适配新版 HTTP 客户端 API：请求头类型由 `Map[String, String]` 改为 `Map[CaseInsensitiveString, String]`（`tool_executor.mbt` 与 `server/stream.mbt`）。
+- 清理所有编译告警，CI 启用 `--deny-warn`：
+  - 移除 `lib/moon.pkg` 中未使用的 `moonbitlang/async/io` 与 `moonbitlang/core/env`。
+  - 移除 `tool_executor.mbt` 与 `lib_test.mbt` 中非异步工具闭包上多余的 `async` 注解。
+  - `chat_store.mbt` 中 `Json::to_string()` 改用 `stringify()`，消除已弃用的 `Show` trait 告警。
+- 修复 `moon.mod` 中已弃用的 `exclude` 选项，改用 `.moonignore` 排除 `scratch_test/`。
+
+### CI
+- 将工作流从 `workflows/check.yml` 迁移至 `.github/workflows/check.yml`，使 GitHub Actions 能正确识别并执行三平台（ubuntu / macos / windows）检查。
+
 ## [0.2.0] - 2026-10-22
 
 ### Security

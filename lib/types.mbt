@@ -9,7 +9,7 @@ pub struct Agent {
   model : String
   instruction : String
   system_prompt : String
-  max_tokens : Int
+  max_tokens : Int32
   temperature : Float
   tool_ids : String
   mut conversation : Array[ChatMessage]
@@ -31,10 +31,10 @@ pub struct Task {
   agent_id : String
   description : String
   mut status : TaskStatus
-  priority : Int
+  priority : Int32
   created_at : String
   mut updated_at : String
-  duration_ms : Int
+  duration_ms : Int32
 }
 
 ///|
@@ -59,10 +59,10 @@ pub struct ChatMessage {
 /// Agent usage statistics
 pub struct AgentStats {
   agent_id : String
-  mut total_conversations : Int
-  mut total_input_chars : Int
-  mut total_output_chars : Int
-  mut total_prompt_tokens : Int
-  mut total_completion_tokens : Int
+  mut total_conversations : Int32
+  mut total_input_chars : Int32
+  mut total_output_chars : Int32
+  mut total_prompt_tokens : Int32
+  mut total_completion_tokens : Int32
   mut last_active_at : String
 }

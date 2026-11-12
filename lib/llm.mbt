@@ -3,7 +3,7 @@
 
 ///|
 /// Simple string search for a substring
-fn string_find(s : String, pat : String) -> Int? {
+fn string_find(s : String, pat : String) -> Int32? {
   if pat.length() == 0 {
     return Some(0)
   }

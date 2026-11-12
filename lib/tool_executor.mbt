@@ -59,7 +59,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "计算简单的四则运算表达式 (如 \"1+2*3\")",
       "{\"expression\":\"string\"}",
       ["expression"],
-      async fn(args, _) { execute_calc(args) },
+      fn(args, _) { execute_calc(args) },
     ),
   )
   engine.register(
@@ -104,7 +104,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "校验并美化打印一段 JSON 文本，输入不合法时返回错误",
       "{\"json\":\"string\"}",
       ["json"],
-      async fn(args, _) { execute_json_format(args) },
+      fn(args, _) { execute_json_format(args) },
     ),
   )
   engine.register(
@@ -113,7 +113,7 @@ pub fn ToolEngine::builtin() -> ToolEngine {
       "统计一段文本的字符数、词数与行数",
       "{\"text\":\"string\"}",
       ["text"],
-      async fn(args, _) { execute_text_stats(args) },
+      fn(args, _) { execute_text_stats(args) },
     ),
   )
   engine
@@ -379,12 +379,10 @@ async fn execute_search(args : String) -> String {
   let cleaned_query = sanitize_query(query)
   let url = "https://www.bing.com/search?format=rss&q=" +
     url_encode(cleaned_query)
-  let headers = Map([
-    (
-      "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    ),
-    ("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8"),
-  ])
+  let headers : Map[@http.CaseInsensitiveString, String] = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+  }
   // Retry once if the connection drops mid-read (Bing occasionally closes the
   // connection on repeated requests, raising ReaderClosed).
   let mut attempt = 0
@@ -409,7 +407,7 @@ async fn execute_search(args : String) -> String {
 async fn do_search(
   cleaned_query : String,
   url : String,
-  headers : Map[String, String],
+  headers : Map[@http.CaseInsensitiveString, String],
 ) -> String {
   // Request with a timeout; the http client does not follow redirects automatically
   let request_result = match
@@ -493,7 +491,7 @@ pub fn url_encode(s : String) -> String {
 
 ///|
 /// Encode a Unicode code point into its UTF-8 byte sequence
-fn utf8_bytes(cp : Int) -> Array[Byte] {
+fn utf8_bytes(cp : Int32) -> Array[Byte] {
   if cp <= 0x7F {
     [cp.to_byte()]
   } else if cp <= 0x7FF {
@@ -516,11 +514,11 @@ fn utf8_bytes(cp : Int) -> Array[Byte] {
 
 ///|
 /// Convert a nibble (0-15) to its uppercase hex character ('0'-'9', 'A'-'F')
-fn hex_nibble(n : Int) -> String {
+fn hex_nibble(n : Int32) -> String {
   if n < 10 {
-    Int::unsafe_to_char(48 + n).to_string()
+    Int32::unsafe_to_char(48 + n).to_string()
   } else {
-    Int::unsafe_to_char(55 + n).to_string()
+    Int32::unsafe_to_char(55 + n).to_string()
   }
 }
 
@@ -774,7 +772,7 @@ fn decode_html_entities(s : String) -> String {
             if entity.length() > 0 && entity[0].to_int() == 35 { // '#' numeric entity
               let code = parse_entity_number(entity[1:].to_owned())
               if code >= 32 && code <= 0x10FFFF {
-                result = result + Int::unsafe_to_char(code).to_string()
+                result = result + Int32::unsafe_to_char(code).to_string()
                 i = end + 1
               } else {
                 match s[i].to_char() {
@@ -811,7 +809,7 @@ fn decode_html_entities(s : String) -> String {
 
 ///|
 /// Parse a numeric HTML entity like "123" or "x1F600" (without the leading #)
-fn parse_entity_number(num_str : String) -> Int {
+fn parse_entity_number(num_str : String) -> Int32 {
   if num_str.length() == 0 {
     return -1
   }
@@ -847,7 +845,7 @@ fn parse_entity_number(num_str : String) -> Int {
 
 ///|
 /// Find the first occurrence of a pattern starting from a given byte index
-fn string_find_from(s : String, pat : String, from : Int) -> Int? {
+fn string_find_from(s : String, pat : String, from : Int32) -> Int32? {
   if pat.length() == 0 {
     return Some(from)
   }
@@ -1108,7 +1106,7 @@ pub fn parse_tool_call(response : String) -> (String, String)? {
 
 ///|
 /// Find a character starting from position (ch is UInt16)
-fn find_char_from(s : String, ch : Int, start : Int) -> Int? {
+fn find_char_from(s : String, ch : Int32, start : Int32) -> Int32? {
   let mut i = start
   while i < s.length() {
     if s[i].to_int() == ch {
@@ -1121,7 +1119,7 @@ fn find_char_from(s : String, ch : Int, start : Int) -> Int? {
 
 ///|
 /// Find matching closing brace for an opening brace at position
-fn find_matching_brace(s : String, open_pos : Int) -> Int? {
+fn find_matching_brace(s : String, open_pos : Int32) -> Int32? {
   if open_pos >= s.length() || s[open_pos] != '{' {
     return None
   }

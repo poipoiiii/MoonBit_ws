@@ -1,6 +1,6 @@
 name = "poipoiiii/agent-runtime"
 
-version = "0.2.0"
+version = "0.2.1"
 
 description = "Lightweight AI Agent Runtime based on MoonBit"
 
@@ -15,9 +15,5 @@ license = "MIT"
 keywords = [ "agent", "ai", "llm", "runtime", "deepseek" ]
 
 import {
-  "moonbitlang/async@0.20.2",
+  "moonbitlang/async@0.22.4",
 }
-
-options(
-  exclude: [ "scratch_test" ],
-)

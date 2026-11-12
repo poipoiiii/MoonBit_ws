@@ -12,7 +12,7 @@
 
 ///|
 /// Max total characters of conversation history fed into the model prompt.
-pub const MAX_HISTORY_CHARS : Int = 8000
+pub const MAX_HISTORY_CHARS : Int32 = 8000
 
 ///|
 /// Persist every agent's non-empty conversation to `file_path` as JSON.
@@ -27,7 +27,7 @@ pub async fn AgentManager::save_chat_history(
     }
   }
   let json = Json::object(obj)
-  @fs.write_file(file_path, json.to_string(), create_mode=@fs.CreateOrTruncate) catch {
+  @fs.write_file(file_path, json.stringify(), create_mode=@fs.CreateOrTruncate) catch {
     _ => return Err("Cannot write conversation history file: " + file_path)
   }
   Ok(())
@@ -74,7 +74,7 @@ pub async fn AgentManager::load_chat_history(
 /// within `max_chars`. Always returns the tail of the history.
 pub fn truncate_conversation(
   history : Array[ChatMessage],
-  max_chars : Int,
+  max_chars : Int32,
 ) -> Array[ChatMessage] {
   if history.length() == 0 {
     return history

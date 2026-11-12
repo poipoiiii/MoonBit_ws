@@ -44,7 +44,7 @@ pub fn AgentManager::list_all(self : AgentManager) -> Array[Agent] {
 
 ///|
 /// Get number of agents
-pub fn AgentManager::count(self : AgentManager) -> Int {
+pub fn AgentManager::count(self : AgentManager) -> Int32 {
   self.agents.length()
 }
 
@@ -95,7 +95,7 @@ pub fn AgentManager::create_agent(
   model : String,
   instruction : String,
   system_prompt : String,
-  max_tokens : Int,
+  max_tokens : Int32,
   temperature : Float,
   tool_ids : String,
 ) -> Agent {
@@ -119,13 +119,13 @@ pub fn AgentManager::create_agent(
 pub fn AgentManager::update_agent(
   self : AgentManager,
   id : String,
-  name? : String = "",
-  model? : String = "",
-  instruction? : String = "",
-  system_prompt? : String = "",
-  max_tokens? : Int = 0,
-  temperature? : Float = 0.0,
-  tool_ids? : String = "",
+  name~ : String = "",
+  model~ : String = "",
+  instruction~ : String = "",
+  system_prompt~ : String = "",
+  max_tokens~ : Int32 = 0,
+  temperature~ : Float = 0.0,
+  tool_ids~ : String = "",
 ) -> Agent? {
   match self.agents.get(id) {
     None => None
@@ -267,10 +267,10 @@ pub fn StatsManager::init(
 pub fn StatsManager::record_conversation(
   self : StatsManager,
   agent_id : String,
-  input_chars : Int,
-  output_chars : Int,
-  prompt_tokens? : Int = 0,
-  completion_tokens? : Int = 0,
+  input_chars : Int32,
+  output_chars : Int32,
+  prompt_tokens~ : Int32 = 0,
+  completion_tokens~ : Int32 = 0,
 ) -> Unit {
   match self.stats.get(agent_id) {
     Some(s) => {

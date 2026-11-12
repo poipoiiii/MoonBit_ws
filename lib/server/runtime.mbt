@@ -10,7 +10,7 @@ pub struct RuntimeContext {
   stats_manager : @lib.StatsManager
   data_dir : String
   cors_origin : String
-  total_memory_mb : Int
+  total_memory_mb : Int32
 }
 
 ///|
@@ -25,7 +25,7 @@ pub fn RuntimeContext::new(
   stats_manager : @lib.StatsManager,
   data_dir : String,
   cors_origin : String,
-  total_memory_mb : Int,
+  total_memory_mb : Int32,
 ) -> RuntimeContext {
   {
     api_key,
@@ -43,7 +43,7 @@ pub fn RuntimeContext::new(
 
 ///|
 /// Parse a port string to int, falling back to 8080 on invalid input.
-pub fn parse_port(s : String) -> Int {
+pub fn parse_port(s : String) -> Int32 {
   let mut result = 0
   let mut i = 0
   while i < s.length() {
@@ -64,7 +64,7 @@ pub fn parse_port(s : String) -> Int {
 
 ///|
 /// Query total physical memory in MB via PowerShell (called once at startup)
-pub async fn system_info() -> Int {
+pub async fn system_info() -> Int32 {
   let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $os=Get-CimInstance Win32_OperatingSystem; Write-Output ([math]::Round($os.TotalVisibleMemorySize*1KB/1MB).ToString())"
   let (_, output) = @process.collect_stdout("powershell", [
     "-NoProfile", "-NonInteractive", "-Command", script,
@@ -77,7 +77,7 @@ pub async fn system_info() -> Int {
 
 ///|
 /// Query the runtime process working set (MB) and CPU time (ms) via PowerShell
-pub async fn process_stats() -> (Int, Int) {
+pub async fn process_stats() -> (Int32, Int32) {
   let script = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $p=Get-Process -Name main -ErrorAction SilentlyContinue; if($p){Write-Output ([math]::Round($p.WorkingSet64/1MB).ToString() + ';' + [math]::Round($p.CPU*1000).ToString())}else{Write-Output '0;0'}"
   let (_, output) = @process.collect_stdout("powershell", [
     "-NoProfile", "-NonInteractive", "-Command", script,
@@ -90,7 +90,7 @@ pub async fn process_stats() -> (Int, Int) {
 
 ///|
 /// Keep only ASCII digit bytes (tolerates BOM/UTF-16 nulls/whitespace) and parse as int
-fn parse_clean_int(s : String) -> Int {
+fn parse_clean_int(s : String) -> Int32 {
   let mut cleaned = ""
   let mut i = 0
   while i < s.length() {
@@ -105,7 +105,7 @@ fn parse_clean_int(s : String) -> Int {
 
 ///|
 /// Parse "a;b" output into a pair of ints, tolerating BOM/UTF-16 nulls/whitespace
-fn parse_pair_clean(s : String) -> (Int, Int) {
+fn parse_pair_clean(s : String) -> (Int32, Int32) {
   let mut cleaned = ""
   let mut i = 0
   while i < s.length() {

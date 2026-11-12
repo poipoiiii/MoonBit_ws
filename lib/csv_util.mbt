@@ -83,7 +83,7 @@ pub fn parse_status(s : String) -> TaskStatus {
 
 ///|
 /// Convert priority string to int
-fn priority_to_int(p : String) -> Int {
+fn priority_to_int(p : String) -> Int32 {
   match p {
     "high" => 3
     "medium" => 2
@@ -94,7 +94,7 @@ fn priority_to_int(p : String) -> Int {
 
 ///|
 /// Parse string to int, default to 0 on failure
-pub fn parse_int(s : String) -> Int {
+pub fn parse_int(s : String) -> Int32 {
   let mut result = 0
   let mut i = 0
   let mut neg = false
@@ -128,9 +128,7 @@ pub fn parse_float(s : String) -> Float {
   if t.length() == 0 {
     return 0.0
   }
-  try {
-    Float::from_double(@string.parse_double(t))
-  } catch {
+  Float::from_double(@string.parse_double(t)) catch {
     _ => 0.0
   }
 }

@@ -33,7 +33,7 @@ fn get_message(choice : @builtin.Json) -> @builtin.Json? {
 
 ///|
 /// Convert a Json value to an int when it is a number.
-fn num_of(v : @builtin.Json?) -> Int? {
+fn num_of(v : @builtin.Json?) -> Int32? {
   match v {
     None => None
     Some(x) =>
@@ -46,7 +46,7 @@ fn num_of(v : @builtin.Json?) -> Int? {
 
 ///|
 /// Extract token usage from a streamed payload, or None.
-fn stream_usage(j : @builtin.Json) -> (Int, Int)? {
+fn stream_usage(j : @builtin.Json) -> (Int32, Int32)? {
   match j {
     Object(obj) =>
       match obj.get("usage") {
@@ -198,12 +198,12 @@ async fn stream_completion(
   ctx : RuntimeContext,
   body_str : String,
   conn : @http.ServerConnection,
-) -> (String, String, String, String, Int, Int) {
+) -> (String, String, String, String, Int32, Int32) {
   let url = "https://api.deepseek.com/v1/chat/completions"
-  let req_headers = Map([
-    ("Content-Type", "application/json"),
-    ("Authorization", "Bearer " + ctx.api_key),
-  ])
+  let req_headers : Map[@http.CaseInsensitiveString, String] = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + ctx.api_key,
+  }
 
   let mut full_response = ""
   let mut tool_name = ""

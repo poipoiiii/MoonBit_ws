@@ -1,0 +1,2 @@
+# Exclude scratch/debug code from mooncakes packaging
+scratch_test/

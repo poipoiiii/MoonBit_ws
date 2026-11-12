@@ -139,7 +139,7 @@ test "truncate_conversation keeps the recent tail within budget" {
 test "tool engine registers and looks up specs" {
   let engine = @lib.ToolEngine::new()
   engine.register(
-    @lib.ToolSpec::new("ping", "echo", "{}", [], async fn(_, _) { "pong" }),
+    @lib.ToolSpec::new("ping", "echo", "{}", [], fn(_, _) { "pong" }),
   )
   engine.register(
     @lib.ToolSpec::new(
@@ -147,7 +147,7 @@ test "tool engine registers and looks up specs" {
       "requires arg",
       "{\"x\":\"string\"}",
       ["x"],
-      async fn(args, _) { "got:" + args },
+      fn(args, _) { "got:" + args },
     ),
   )
   assert_true(engine.find("ping") is Some(_))
@@ -168,7 +168,9 @@ async test "builtin engine registers and runs the new tools" {
     _ => "ERR"
   }
   assert_true(bad.contains("解析失败"))
-  let stats = engine.execute("text_stats", "{\"text\":\"hello world\\nfoo\"}", ".") catch {
+  let stats = engine.execute(
+    "text_stats", "{\"text\":\"hello world\\nfoo\"}", ".",
+  ) catch {
     _ => "ERR"
   }
   assert_true(stats.contains("词数=3"))

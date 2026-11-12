@@ -5,7 +5,7 @@
 
 ///|
 /// Find the first occurrence of a substring (byte index), or None.
-fn string_find(s : String, pat : String) -> Int? {
+fn string_find(s : String, pat : String) -> Int32? {
   if pat.length() == 0 {
     return Some(0)
   }
@@ -95,7 +95,7 @@ fn json_field_string(body : String, key : String) -> String? {
 
 ///|
 /// Parse hex char to int (0-15)
-fn hex_to_int(ch : UInt16) -> Int {
+fn hex_to_int(ch : UInt16) -> Int32 {
   if ch >= 48 && ch <= 57 {
     ch.to_int() - 48
   } else if ch >= 97 && ch <= 102 {

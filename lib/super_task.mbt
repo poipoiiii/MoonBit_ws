@@ -75,7 +75,7 @@ pub fn SuperTaskManager::list_all(self : SuperTaskManager) -> Array[SuperTask] {
 
 ///|
 /// Count number of super tasks
-pub fn SuperTaskManager::count(self : SuperTaskManager) -> Int {
+pub fn SuperTaskManager::count(self : SuperTaskManager) -> Int32 {
   self.tasks.length()
 }
 

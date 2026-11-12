@@ -59,7 +59,7 @@ pub fn TaskManager::list_all(self : TaskManager) -> Array[Task] {
 
 ///|
 /// Count number of tasks
-pub fn TaskManager::count(self : TaskManager) -> Int {
+pub fn TaskManager::count(self : TaskManager) -> Int32 {
   self.tasks.length()
 }
 
@@ -88,7 +88,7 @@ pub fn TaskManager::create_task(
   id : String,
   agent_id : String,
   description : String,
-  priority : Int,
+  priority : Int32,
 ) -> Task {
   let task = Task::{
     id,

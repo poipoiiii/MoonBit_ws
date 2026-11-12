@@ -283,7 +283,7 @@ fn build_chat_body(
   model : String,
   messages_json : String,
   tools_json : String,
-  max_tokens : Int,
+  max_tokens : Int32,
   temperature : Float,
 ) -> String {
   let tools_part = if tools_json.length() > 0 {
